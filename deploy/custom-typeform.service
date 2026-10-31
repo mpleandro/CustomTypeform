@@ -1,0 +1,20 @@
+# /etc/systemd/system/custom-typeform.service
+[Unit]
+Description=Custom Typeform
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/custom-typeform
+ExecStart=/usr/bin/node server.js
+Restart=always
+Environment=PORT=3000
+Environment=HOST=127.0.0.1
+Environment=TRUST_PROXY=1
+Environment=DATA_DIR=/opt/custom-typeform/data
+# Troque pela sua senha antes de iniciar:
+Environment=ADMIN_PASSWORD=TROQUE-ESTA-SENHA
+
+[Install]
+WantedBy=multi-user.target

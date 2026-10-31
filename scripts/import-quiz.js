@@ -26,7 +26,7 @@ const perguntas = old.blocos.flatMap(b => b.perguntas).map(q => ({
   rotulo: q.rotulo, ajuda: q.ajuda || '', obrigatoria: !!q.obrigatoria, placeholder: q.placeholder || '',
   opcoes: q.opcoes || [], outra: !!q.outra, exclusivas: q.exclusivas || [], compacta: !!q.compacta,
   min: q.min ?? 1, max: q.max ?? 5, rotulo_min: q.rotulo_min || '', rotulo_max: q.rotulo_max || '',
-  prefill: q.prefill || [], webhook: { ativo: false, url: '', segredo: '' }
+  prefill: q.prefill || [], proxima: '', ramos: {}
 }));
 
 let logo = '';

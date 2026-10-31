@@ -38,7 +38,7 @@ function lineChart(series) {
 export async function renderResults(id, { mount, shell, setCleanup }) {
   const { form } = await api('GET', `/forms/${id}`);
   const qs = form.schema.perguntas.filter(q => q.tipo !== 'aviso');
-  const S = { tab: 'resumo', days: 30, status: 'all', search: '', page: 1 };
+  const S = { tab: 'resumo', days: 30, status: 'all', search: '', page: 1, qview: 'active' };
   const body = el('div');
   const stamp = el('span', { class: 'hint' });
   let timer, searchTimer, alive = true;
@@ -54,7 +54,7 @@ export async function renderResults(id, { mount, shell, setCleanup }) {
   function renderHead() {
     fill(head, 
       el('div', {},
-        el('div', { class: 'row' }, el('h1', { text: form.titulo }), el('span', { class: `pill ${form.status === 'published' ? 'ok' : ''}`, text: form.status === 'published' ? 'Publicado' : 'Rascunho' })),
+        el('div', { class: 'row' }, el('h1', { text: form.titulo }), (() => { const p = { aberto: ['No ar', 'ok'], em_breve: ['Agendado', 'warn'], encerrado: ['Encerrado', 'err'], rascunho: ['Rascunho', ''] }[form.estado] || ['Rascunho', '']; return el('span', { class: `pill ${p[1]}`, text: p[0] }); })()),
         el('div', { class: 'row', style: 'margin-top:4px' }, el('span', { class: 'mono hint', text: `/f/${form.slug}` }),
           el('button', { class: 'btn ghost sm', onclick: () => copy(formUrl(form.slug)) }, 'Copiar link'), stamp)),
       el('div', { class: 'grow' }),
@@ -72,47 +72,57 @@ export async function renderResults(id, { mount, shell, setCleanup }) {
   async function loadSummary() {
     const { stats: s } = await api('GET', `/forms/${id}/stats?days=${S.days}`);
     const started = s.started || 1;
-    const funnel = s.funnel.map((f, i) => {
-      const prev = i ? s.funnel[i - 1].answered : s.started;
-      const lost = prev ? (prev - f.answered) / prev : 0;
-      return el('div', { class: 'fn', title: `${f.answered} de ${s.started} pessoas responderam` },
+    // Abandonment per question: people who reached it (following their own route) and stopped there.
+    const funnel = s.funnel.map(f => {
+      const lost = f.reached ? f.abandoned / f.reached : 0;
+      return el('div', { class: 'fn', title: `${f.reached} chegaram · ${f.answered} responderam · ${f.abandoned} pararam aqui` },
         el('span', { class: 'n', text: String(f.n) }),
-        el('span', { class: 'q' }, plain(f.rotulo) || 'Sem título', el('span', { class: 'muted', text: ` · ${fmtNum(f.answered)}` })),
+        el('span', { class: 'q' }, plain(f.rotulo) || 'Sem título', el('span', { class: 'muted', text: ` · ${fmtNum(f.reached)} chegaram` })),
         el('div', { class: 'bar' }, el('i', { style: `width:${(f.answered / started) * 100}%` })),
-        el('span', { class: `drop${lost >= .2 && prev >= 5 ? ' hi' : ''}`, text: i && prev ? (lost > 0 ? `−${fmtPct(lost)}` : '—') : fmtPct(f.answered / started) }));
+        el('span', { class: `drop${lost >= .2 && f.reached >= 5 ? ' hi' : ''}`, text: f.abandoned ? `−${fmtPct(lost)}` : '—' }));
     });
+    if (s.abandoned_at_submit) funnel.push(el('div', { class: 'fn' }, el('span', { class: 'n', text: '↗' }), el('span', { class: 'q', text: 'Envio (última etapa)' }), el('div', { class: 'bar' }), el('span', { class: 'drop hi', text: fmtNum(s.abandoned_at_submit) })));
 
-    const card = q => {
+    const card = (q, past) => {
       const body = el('div');
       if (q.dist) {
         const top = Math.max(1, ...q.dist.map(d => d.n));
         body.append(el('div', { class: 'dist' }, q.dist.map(d => el('div', { class: 'd' },
-          el('span', { text: d.label }), el('b', { text: `${fmtNum(d.n)}${q.answered ? ` · ${fmtPct(d.n / q.answered)}` : ''}` }),
+          el('span', { text: q.tipo === 'escala' && q.estilo !== 'numeros' ? (q.estilo === 'emojis' ? `${window.CtfRoute.emojis[q.max]?.[Number(d.label) - 1] || ''} ${d.label}` : `${d.label} ★`) : d.label }), el('b', { text: `${fmtNum(d.n)}${q.answered ? ` · ${fmtPct(d.n / q.answered)}` : ''}` }),
           el('div', { class: 'bar' }, el('i', { style: `width:${(d.n / top) * 100}%` }))))));
       }
       if (q.avg !== undefined && q.avg !== null) body.append(el('p', { style: 'margin:12px 0 0;font-weight:600', text: q.tipo === 'numero' ? `Média ${q.avg.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} · mín ${q.min} · máx ${q.max}` : `Média ${q.avg.toFixed(2).replace('.', ',')}` }));
       if (q.latest) body.append(q.latest.length ? el('ul', { class: 'latest' }, q.latest.map(t => el('li', { text: t, title: t }))) : el('p', { class: 'hint', style: 'margin-top:12px', text: 'Sem respostas ainda.' }));
       return el('div', { class: 'card qcard' },
-        el('h3', { text: plain(q.rotulo) || 'Sem título' }),
-        el('p', { class: 'hint', text: `${TIPOS[q.tipo].nome} · ${fmtNum(q.answered)} resposta${q.answered === 1 ? '' : 's'}` }), body);
+        el('h3', { text: `${q.n}. ${plain(q.rotulo) || 'Sem título'}` }),
+        el('p', { class: 'hint', text: `${TIPOS[q.tipo].nome} · ${fmtNum(q.answered)} resposta${q.answered === 1 ? '' : 's'}${past ? ` · removida em ${fmtDate(q.removida_em).slice(0, 10)}` : ''}` }), body);
     };
 
-    fill(body, 
+    const view = S.qview === 'past' && s.archived.length ? 'past' : 'active';
+    const qtab = (k, label, n) => el('button', { class: 'tab', role: 'tab', 'aria-selected': String(view === k), onclick: () => { S.qview = k; load(); } }, `${label} (${fmtNum(n)})`);
+
+    fill(body,
       el('div', { class: 'kpis' },
         kpi('Visualizações', fmtNum(s.views)),
         kpi('Iniciaram', fmtNum(s.started), s.views ? `${fmtPct(Math.min(1, s.started / s.views))} das visualizações` : undefined),
         kpi('Concluíram', fmtNum(s.completed), s.started - s.completed ? `${fmtNum(s.started - s.completed)} abandonaram` : undefined),
         kpi('Taxa de conclusão', s.started ? fmtPct(s.rate) : '—'),
-        kpi('Tempo mediano', fmtDur(s.median_seconds), 'para concluir')),
+        kpi('Tempo mediano', fmtDur(s.median_seconds), 'para concluir'),
+        kpi('Respostas ativas', fmtNum(s.answers_active), 'em perguntas que estão no formulário'),
+        kpi('Respostas passadas', fmtNum(s.answers_past), 'em perguntas removidas')),
       el('div', { class: 'card chart', style: 'margin-bottom:22px' },
         el('div', { class: 'legend' },
           el('span', {}, el('i', { style: 'background:var(--muted)' }), 'Iniciadas'), el('span', {}, el('i', { style: 'background:var(--accent)' }), 'Concluídas')),
         lineChart(s.series)),
       el('h2', { style: 'font-size:16px;margin:0 0 10px', text: 'Funil por pergunta' }),
-      el('p', { class: 'hint', style: 'margin:0 0 10px', text: 'Quantas pessoas responderam cada pergunta. Em vermelho: quedas de 20% ou mais em relação à pergunta anterior.' }),
+      el('p', { class: 'hint', style: 'margin:0 0 10px', text: 'A barra mostra quantas pessoas responderam. A coluna da direita é o abandono: de quem chegou à pergunta (pela própria rota, com os saltos), quantos pararam ali. Em vermelho: 20% ou mais.' }),
       s.funnel.length ? el('div', { class: 'card funnel', style: 'margin-bottom:22px' }, funnel) : el('div', { class: 'card empty', text: 'Este formulário ainda não tem perguntas.' }),
       el('h2', { style: 'font-size:16px;margin:0 0 10px', text: 'Respostas por pergunta' }),
-      el('div', { class: 'qgrid' }, s.questions.map(card)));
+      el('div', { class: 'tabs', style: 'margin-bottom:14px;width:fit-content' }, qtab('active', 'Ativas', s.answers_active), qtab('past', 'Passadas', s.answers_past)),
+      view === 'past' && el('p', { class: 'past-note', text: 'Perguntas que foram removidas do formulário. As respostas dadas a elas continuam guardadas e aparecem aqui e na exportação CSV.' }),
+      view === 'active'
+        ? el('div', { class: 'qgrid' }, s.questions.map(q => card(q, false)))
+        : el('div', { class: 'qgrid' }, s.archived.map(q => card(q, true))));
   }
 
   /* ----- responses ----- */
@@ -126,7 +136,7 @@ export async function renderResults(id, { mount, shell, setCleanup }) {
     const search = el('input', { class: 'input', style: 'max-width:260px', placeholder: 'Buscar nas respostas…', value: S.search });
     search.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { S.search = search.value.trim(); S.page = 1; load(); }, 350); });
 
-    const stoppedAt = r => { const i = qs.findIndex(x => x.id === r.last_qid); return i >= 0 ? `Parou na pergunta ${i + 1}` : 'Sem respostas'; };
+    const stoppedAt = r => { const i = form.schema.perguntas.findIndex(x => x.id === r.last_qid); return i >= 0 ? `Última resposta: pergunta ${i + 1}` : 'Sem respostas'; };
     const rows = data.respostas.map(r => el('tr', { onclick: () => openDrawer(r) },
       el('td', { class: 'mono', text: fmtDate(r.started_at) }),
       el('td', {}, r.completed_at ? el('span', { class: 'pill ok', text: 'Completa' }) : el('span', { class: 'pill warn', title: stoppedAt(r), text: 'Parcial' })),
@@ -146,6 +156,8 @@ export async function renderResults(id, { mount, shell, setCleanup }) {
   }
 
   function openDrawer(r) {
+    const route = new Set(window.CtfRoute.visited(form.schema.perguntas, r.answers).map(i => form.schema.perguntas[i].id));
+    const past = (form.schema.arquivadas || []).filter(q => r.answers[q.id] !== undefined);
     const close = () => { bg.remove(); drawer.remove(); document.removeEventListener('keydown', onKey); };
     const onKey = e => { if (e.key === 'Escape') close(); };
     const bg = el('div', { class: 'drawer-bg', onclick: close });
@@ -154,11 +166,16 @@ export async function renderResults(id, { mount, shell, setCleanup }) {
       el('div', { class: 'row wrap', style: 'margin-bottom:10px' },
         r.completed_at ? el('span', { class: 'pill ok', text: 'Completa' }) : el('span', { class: 'pill warn', text: 'Parcial' }),
         el('span', { class: 'muted mono', text: fmtDate(r.started_at) })),
-      qs.map(q => {
+      form.schema.perguntas.map((q, pos) => {
+        if (q.tipo === 'aviso') return null;
         const v = display(r.answers[q.id]);
         const other = r.answers[`${q.id}_outra`];
-        return el('div', { class: 'qa' }, el('small', { text: plain(q.rotulo) || q.chave }), el('div', { class: v ? '' : 'muted', text: v ? (other ? `${v}: ${other}` : v) : '—' }));
+        const skipped = !route.has(q.id) && !v;
+        return el('div', { class: 'qa' }, el('small', { text: `${pos + 1}. ${plain(q.rotulo) || q.chave}` }),
+          el('div', { class: v ? '' : 'muted', text: v ? (other ? `${v}: ${other}` : v) : skipped ? '— pulada pela navegação' : '—' }));
       }),
+      past.length > 0 && el('div', { class: 'qa' }, el('small', { text: 'Respostas passadas (perguntas removidas)' }),
+        past.map(q => el('div', { style: 'margin:8px 0 0' }, el('small', { text: plain(q.rotulo) || q.chave }), el('div', { text: display(r.answers[q.id]) })))),
       Object.keys(r.meta || {}).length > 0 && el('div', { class: 'qa' }, el('small', { text: 'Rastreio' }), el('div', { class: 'mono', style: 'font-size:12px' }, Object.entries(r.meta).map(([k, v]) => el('div', { text: `${k}: ${v}` })))),
       el('div', { class: 'qa' }, el('small', { text: 'ID' }), el('div', { class: 'mono muted', style: 'font-size:12px', text: r.id })),
       el('button', {

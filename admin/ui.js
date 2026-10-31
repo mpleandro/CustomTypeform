@@ -48,9 +48,10 @@ export const TIPOS = {
   data: { nome: 'Data', sigla: '31', desc: 'Seletor de data' },
   cidade_uf: { nome: 'Cidade e UF', sigla: 'UF', desc: 'Cidade + estado' },
   unica: { nome: 'Escolha única', sigla: '◉', desc: 'Uma opção entre várias' },
+  dropdown: { nome: 'Lista suspensa', sigla: '▾', desc: 'Lista pesquisável, ideal para muitas opções' },
   multipla: { nome: 'Múltipla escolha', sigla: '☑', desc: 'Várias opções' },
   sim_nao: { nome: 'Sim / Não', sigla: '±', desc: 'Duas opções' },
-  escala: { nome: 'Escala', sigla: '1-5', desc: 'Nota ou avaliação' },
+  escala: { nome: 'Avaliação', sigla: '★', desc: 'Números, estrelas ou emojis (NPS e satisfação)' },
   aviso: { nome: 'Mensagem', sigla: 'i', desc: 'Texto sem resposta' }
 };
 

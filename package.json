@@ -1,0 +1,13 @@
+{
+  "name": "custom-typeform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Plataforma própria de formulários estilo Typeform, com painel administrativo.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "ADMIN_PASSWORD=teste node server.js",
+    "import-quiz": "node scripts/import-quiz.js"
+  },
+  "engines": { "node": ">=22.13" }
+}

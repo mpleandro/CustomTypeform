@@ -11,6 +11,7 @@ const { createWebhooks } = require('./lib/webhooks');
 const schemaLib = require('./lib/schema');
 const { checkAnswer, isText } = require('./lib/validate');
 const stats = require('./lib/stats');
+const routing = require('./public/route.js');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -113,11 +114,13 @@ const formSummary = f => ({ id: f.id, slug: f.slug, titulo: f.title });
 
 /* ---------- webhooks glue ---------- */
 
+// One webhook per form (Ajustes): it fires when the form is completed and/or when one chosen question is answered.
 function fireQuestionHook(form, q, response, value, outra) {
-  if (!q.webhook?.ativo || !q.webhook.url) return;
+  const w = form.schema.ajustes.webhook;
+  if (!w.ao_responder || !w.url || w.pergunta !== q.id) return;
   hooks.dispatch({
     form_id: form.id, response_id: response.id, question_id: q.id, event: 'question.answered',
-    url: q.webhook.url, secret: q.webhook.segredo,
+    url: w.url, secret: w.segredo,
     payload: {
       evento: 'question.answered', enviado_em: new Date().toISOString(), formulario: formSummary(form), resposta_id: response.id,
       pergunta: { id: q.id, chave: q.chave, tipo: q.tipo, rotulo: q.rotulo },
@@ -127,8 +130,8 @@ function fireQuestionHook(form, q, response, value, outra) {
   });
 }
 function fireCompleteHook(form, response) {
-  const w = form.schema.ajustes.webhook_final;
-  if (!w.ativo || !w.url) return;
+  const w = form.schema.ajustes.webhook;
+  if (!w.ao_concluir || !w.url) return;
   hooks.dispatch({
     form_id: form.id, response_id: response.id, question_id: null, event: 'form.completed', url: w.url, secret: w.segredo,
     payload: {
@@ -142,22 +145,45 @@ const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 /* ---------- public API ---------- */
 
+// Public forms are everything except drafts; whether they accept answers depends on status and schedule.
 function publishedForm(slug) {
   const f = store.getFormBySlug(slug);
-  return f && f.status === 'published' ? f : null;
+  return f && f.status !== 'draft' ? f : null;
+}
+
+const GRACE_MS = 10 * 60_000;
+function openState(f, now = Date.now()) {
+  if (f.status === 'closed') return 'encerrado';
+  const { abre_em: abre, fecha_em: fecha } = f.schema.agenda;
+  if (abre && now < Date.parse(abre)) return 'em_breve';
+  if (fecha && now >= Date.parse(fecha)) return 'encerrado';
+  return 'aberto';
+}
+// People already filling the form when a scheduled closing hits get a few minutes to finish.
+function acceptsAnswers(f, response) {
+  if (openState(f) === 'aberto') return true;
+  const fecha = f.schema.agenda.fecha_em;
+  return f.status === 'published' && !!fecha && !!response && Date.parse(response.started_at) < Date.parse(fecha) && Date.now() < Date.parse(fecha) + GRACE_MS;
+}
+const CLOSED_MSG = 'Este formulário não está mais recebendo respostas.';
+
+function fillUrl(url, schema, answers, rid) {
+  const byKey = { resposta_id: rid };
+  for (const q of schema.perguntas) if (q.tipo !== 'aviso') byKey[q.chave] = stats.display(q, answers[q.id]);
+  return url.replace(/\{([a-z0-9_]+)\}/gi, (_, k) => encodeURIComponent(byKey[k] ?? ''));
 }
 
 const publicRoutes = {
   async get(req, res, { slug }) {
     const f = publishedForm(slug);
     if (!f) return fail(res, 404, 'Formulário não encontrado.');
-    json(res, 200, { ok: true, titulo: f.title, slug: f.slug, schema: schemaLib.publicSchema(f.schema) });
+    json(res, 200, { ok: true, titulo: f.title, slug: f.slug, estado: openState(f), schema: schemaLib.publicSchema(f.schema) });
   },
 
   async view(req, res, { slug }) {
     const f = publishedForm(slug);
     if (!f) return fail(res, 404, 'Formulário não encontrado.');
-    if (!viewLimited(clientIp(req))) store.addView(f.id, stats.dayKey(new Date()));
+    if (openState(f) === 'aberto' && !viewLimited(clientIp(req))) store.addView(f.id, stats.dayKey(new Date()));
     json(res, 200, { ok: true });
   },
 
@@ -175,6 +201,7 @@ const publicRoutes = {
 
     let r = typeof body.rid === 'string' ? store.getResponse(body.rid, f.id) : null;
     if (r?.completed_at) return json(res, 200, { ok: true, rid: r.id, concluida: true });
+    if (!acceptsAnswers(f, r)) return fail(res, 403, CLOSED_MSG, { estado: openState(f) });
     if (!r) {
       r = { id: crypto.randomUUID(), form_id: f.id, answers: {}, meta: metaFor(f, body.meta), last_qid: null };
       store.insertResponse(r);
@@ -199,46 +226,61 @@ const publicRoutes = {
     if (!body) return fail(res, 400, 'Requisição inválida.');
     if (body.website) return json(res, 200, { ok: true }); // honeypot: bots fill it; pretend success and drop it
 
-    const errors = {}, answers = {}, sent = body.respostas && typeof body.respostas === 'object' ? body.respostas : {};
-    for (const q of f.schema.perguntas) {
+    const errors = {}, clean = {}, bad = {}, answers = {};
+    const sent = body.respostas && typeof body.respostas === 'object' ? body.respostas : {};
+    const qs = f.schema.perguntas;
+    for (const q of qs) {
       if (q.tipo === 'aviso') continue;
-      const c = checkAnswer(q, sent[q.id], sent[`${q.id}_outra`]);
-      if (c.error) errors[q.id] = c.error;
-      else if (!c.empty) { answers[q.id] = c.value; if (c.outra) answers[`${q.id}_outra`] = c.outra; }
+      const c = checkAnswer({ ...q, obrigatoria: false }, sent[q.id], sent[`${q.id}_outra`]);
+      if (c.error) bad[q.id] = c.error;
+      else if (!c.empty) { clean[q.id] = c.value; if (c.outra) clean[`${q.id}_outra`] = c.outra; }
+    }
+    // Only questions on this respondent's route count; answers to skipped ones are stale and dropped.
+    for (const q of routing.visited(qs, clean).map(i => qs[i])) {
+      if (q.tipo === 'aviso') continue;
+      if (bad[q.id]) errors[q.id] = bad[q.id];
+      else if (clean[q.id] === undefined) { if (q.obrigatoria) errors[q.id] = 'obrigatória'; }
+      else { answers[q.id] = clean[q.id]; if (clean[`${q.id}_outra`]) answers[`${q.id}_outra`] = clean[`${q.id}_outra`]; }
     }
     if (f.schema.consentimento.ativo && body.consentimento !== true) errors.consentimento = 'obrigatório';
     if (Object.keys(errors).length) return fail(res, 422, 'Algumas respostas são inválidas.', { campos: errors });
 
     let r = typeof body.rid === 'string' ? store.getResponse(body.rid, f.id) : null;
     if (r?.completed_at) return json(res, 200, { ok: true });
+    if (!acceptsAnswers(f, r)) return fail(res, 403, CLOSED_MSG, { estado: openState(f) });
     if (!r) {
       r = { id: crypto.randomUUID(), form_id: f.id, answers: {}, meta: metaFor(f, body.meta), last_qid: null };
       store.insertResponse(r);
     }
     const before = r.answers;
-    r.answers = answers;
+    // Answers to questions deleted from the form ("passadas") are kept as they were.
+    const current = new Set(qs.map(q => q.id));
+    const kept = Object.fromEntries(Object.entries(before).filter(([k]) => !current.has(k.replace(/_outra$/, ''))));
+    r.answers = { ...kept, ...answers };
     r.completed_at = new Date().toISOString();
     r.started_at = store.getResponse(r.id, f.id).started_at;
     store.saveResponse(r);
     // Any answer the incremental save missed (offline, deleted draft) still triggers its webhook.
-    for (const q of f.schema.perguntas) {
+    for (const q of qs) {
       if (answers[q.id] !== undefined && !sameJson(before[q.id], answers[q.id])) fireQuestionHook(f, q, r, answers[q.id], answers[`${q.id}_outra`]);
     }
     fireCompleteHook(f, r);
-    json(res, 200, { ok: true });
+    // Conditional redirect: chosen here so the rules and URLs never reach the browser unless they match.
+    const target = routing.redirectFor(f.schema.final.redirecionamento, answers);
+    json(res, 200, { ok: true, redirect: target ? fillUrl(target, f.schema, answers, r.id) : '' });
   }
 };
 
 /* ---------- admin API ---------- */
 
 function formPayload(f) {
-  return { id: f.id, slug: f.slug, titulo: f.title, status: f.status, schema: f.schema, criado_em: f.created_at, atualizado_em: f.updated_at };
+  return { id: f.id, slug: f.slug, titulo: f.title, status: f.status, estado: f.status === 'draft' ? 'rascunho' : openState(f), aberto_em: f.opened_at, schema: f.schema, criado_em: f.created_at, atualizado_em: f.updated_at };
 }
 const daysOf = q => { const n = Number(q.get('days')); return Number.isFinite(n) && n >= 0 && n <= 365 ? Math.floor(n) : 30; };
 
 const adminRoutes = [
   ['GET', '/api/admin/forms', async (req, res) => {
-    json(res, 200, { ok: true, forms: store.listForms().map(f => ({ ...f, rate: f.started ? f.completed / f.started : 0 })) });
+    json(res, 200, { ok: true, forms: store.listForms().map(({ agenda, ...f }) => ({ ...f, agenda, rate: f.started ? f.completed / f.started : 0, estado: f.status === 'draft' ? 'rascunho' : openState({ status: f.status, schema: { agenda } }) })) });
   }],
 
   ['POST', '/api/admin/forms', async (req, res) => {
@@ -249,7 +291,17 @@ const adminRoutes = [
       const src = store.getForm(body.copiar_de);
       if (!src) return fail(res, 404, 'Formulário de origem não encontrado.');
       schema = JSON.parse(JSON.stringify(src.schema));
-      for (const q of schema.perguntas) q.id = schemaLib.newId();
+      const map = {};
+      for (const q of schema.perguntas) { map[q.id] = schemaLib.newId(); }
+      const w = schema.ajustes.webhook;
+      w.pergunta = map[w.pergunta] || '';
+      for (const rule of schema.final.redirecionamento.regras) for (const c of rule.condicoes) c.pergunta = map[c.pergunta] || c.pergunta;
+      schema.agenda = { abre_em: '', fecha_em: '' };
+      for (const q of schema.perguntas) {
+        q.id = map[q.id];
+        q.proxima = map[q.proxima] || (q.proxima === 'fim' ? 'fim' : '');
+        q.ramos = Object.fromEntries(Object.entries(q.ramos || {}).map(([k, v]) => [k, map[v] || v]));
+      }
     } else schema = schemaLib.defaultSchema();
     const id = crypto.randomUUID();
     store.createForm({ id, slug: uniqueSlug(title), title, status: 'draft', schema: schemaLib.sanitize(schema) });
@@ -269,8 +321,12 @@ const adminRoutes = [
     const slug = isText(body.slug) ? body.slug.trim().toLowerCase() : f.slug;
     if (!validSlug(slug)) return fail(res, 422, 'Slug inválido: use 2 a 60 caracteres entre letras minúsculas, números e hífens (ex.: pesquisa-clientes).', { campo: 'slug' });
     if (store.slugTaken(slug, id)) return fail(res, 409, 'Já existe outro formulário com esse slug.', { campo: 'slug' });
-    const schema = schemaLib.sanitize(body.schema);
-    const status = body.status === 'published' ? 'published' : 'draft';
+    const schema = schemaLib.sanitize(body.schema, f.schema);
+    const status = body.status === 'published' || body.status === 'closed' ? body.status : 'draft';
+    if (f.opened_at) {
+      const locked = schemaLib.lockedChanges(f.schema, schema);
+      if (locked.length) return fail(res, 422, 'O tipo das perguntas não pode mudar depois que o formulário foi aberto.', { problemas: locked });
+    }
     if (status === 'published') {
       const issues = schemaLib.problems(schema);
       if (issues.length) return fail(res, 422, 'Corrija os pontos abaixo para publicar.', { problemas: issues });
@@ -330,8 +386,7 @@ const adminRoutes = [
     const f = store.getForm(id);
     const log = f && store.getLog(Number(logId), id);
     if (!log) return fail(res, 404, 'Registro não encontrado.');
-    const q = f.schema.perguntas.find(x => x.id === log.question_id);
-    const secret = q ? q.webhook.segredo : f.schema.ajustes.webhook_final.segredo;
+    const secret = f.schema.ajustes.webhook.segredo;
     const r = await hooks.once({ form_id: id, response_id: log.response_id, question_id: log.question_id, event: log.event, url: log.url, secret, payload: log.payload });
     json(res, 200, { ok: true, resultado: r });
   }],
@@ -402,6 +457,34 @@ async function handleAdminApi(req, res, url) {
   fail(res, 404, 'Rota não encontrada.');
 }
 
+/* ---------- form page with share metadata ---------- */
+
+const escHtml = v => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// WhatsApp, Instagram etc. read the title/description/image from the HTML, so they are filled in on the server.
+function serveFormPage(req, res, slug) {
+  fs.readFile(path.join(PUBLIC_DIR, 'form.html'), 'utf8', (err, html) => {
+    if (err) return send(res, 500, 'Erro');
+    const f = slug ? publishedForm(slug) : null;
+    let meta = '';
+    if (f) {
+      const base = process.env.PUBLIC_URL || `${isHttps(req) ? 'https' : 'http'}://${req.headers.host}`;
+      const { seo } = f.schema.ajustes;
+      const title = (seo.titulo || f.title).replace(/\*/g, '');
+      const desc = (seo.descricao || f.schema.boas_vindas.texto || '').replace(/\*/g, '').slice(0, 200);
+      const image = seo.imagem ? (seo.imagem.startsWith('/') ? base + seo.imagem : seo.imagem) : '';
+      const tags = [
+        ['name', 'description', desc], ['property', 'og:type', 'website'], ['property', 'og:title', title], ['property', 'og:description', desc],
+        ['property', 'og:url', `${base}/f/${f.slug}`], ['name', 'twitter:card', image ? 'summary_large_image' : 'summary'],
+        ['name', 'twitter:title', title], ['name', 'twitter:description', desc], image && ['property', 'og:image', image], image && ['name', 'twitter:image', image]
+      ].filter(t => t && t[2]);
+      meta = tags.map(([k, n, c]) => `<meta ${k}="${n}" content="${escHtml(c)}">`).join('\n  ');
+      html = html.replace('<title>Formulário</title>', `<title>${escHtml(title)}</title>`);
+    }
+    send(res, 200, req.method === 'HEAD' ? undefined : html.replace('<!--META-->', meta), { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+  });
+}
+
 /* ---------- router ---------- */
 
 const PUBLIC_API = /^\/api\/public\/([a-z0-9-]+)(?:\/(view|answer|complete))?$/;
@@ -423,7 +506,9 @@ http.createServer(async (req, res) => {
 
     if (pathname === '/favicon.ico') return send(res, 204);
     if (pathname === '/') { res.writeHead(302, { Location: '/admin/' }); return res.end(); }
-    if (/^\/f\/[a-z0-9-]+\/?$/.test(pathname) || pathname === '/preview') return serveFile(req, res, path.join(PUBLIC_DIR, 'form.html'));
+    const page = /^\/f\/([a-z0-9-]+)\/?$/.exec(pathname);
+    if (page) return serveFormPage(req, res, page[1]);
+    if (pathname === '/preview') return serveFormPage(req, res, '');
     if (pathname.startsWith('/static/')) return serveDir(req, res, PUBLIC_DIR, pathname.slice(8));
     if (pathname.startsWith('/uploads/')) return serveDir(req, res, UPLOAD_DIR, pathname.slice(9), 'public, max-age=31536000, immutable');
     if (pathname === '/admin') { res.writeHead(302, { Location: '/admin/' }); return res.end(); }

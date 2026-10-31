@@ -1,0 +1,22 @@
+# Dados gerados em runtime (banco, uploads, segredo de sessão)
+data/
+*.db
+*.db-shm
+*.db-wal
+.secret
+
+# Dependências e ambiente
+node_modules/
+.env
+.env.*
+
+# Logs
+*.log
+npm-debug.log*
+
+# Lixo de sistema/editor
+.DS_Store
+__MACOSX/
+Thumbs.db
+.vscode/
+.idea/

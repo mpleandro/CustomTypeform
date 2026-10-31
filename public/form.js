@@ -15,6 +15,7 @@ const nav = document.querySelector('.nav');
 const prevBtn = nav.querySelector('[data-prev]');
 const nextBtn = nav.querySelector('[data-next]');
 const honeypot = document.querySelector('.hp');
+const topLabel = document.querySelector('.top-label');
 const params = new URLSearchParams(location.search);
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const finePointer = matchMedia('(pointer: fine)').matches;
@@ -22,6 +23,8 @@ const finePointer = matchMedia('(pointer: fine)').matches;
 let schema, formTitle = '';
 let screens = [];
 let index = 0;
+let redirectTarget = ''; // where to send the respondent after the thank-you screen (conditional redirect)
+let path = []; // screen indexes the respondent has gone through, in order (branching skips questions)
 let answers = {};
 let rid = null;
 let snapshot = null;
@@ -113,14 +116,16 @@ function applyTheme(t) {
   root.style.setProperty('--bg', t.fundo);
   root.style.setProperty('--fg', t.texto);
   root.style.setProperty('--accent', t.destaque);
+  root.style.setProperty('--accent2', t.destaque2 || t.destaque);
   root.style.setProperty('--on-accent', luminance(t.destaque) > .4 ? '#111111' : '#ffffff');
   root.style.setProperty('--radius', `${t.raio}px`);
   root.style.setProperty('--font', `"${t.fonte}", system-ui, sans-serif`);
   root.style.colorScheme = luminance(t.fundo) < .4 ? 'dark' : 'light';
-  document.getElementById('font-link').href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(t.fonte).replace(/%20/g, '+')}:wght@400;500;600;700;800&display=swap`;
+  document.getElementById('font-link').href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(t.fonte).replace(/%20/g, '+')}:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap`;
   const bg = document.querySelector('.bg');
   bg.className = `bg${t.fundo_imagem ? ' has-image' : ' has-glow'}${t.grade ? ' has-grid' : ''}`;
   bg.style.backgroundImage = t.fundo_imagem ? `url("${encodeURI(t.fundo_imagem)}")` : '';
+  topLabel.textContent = schema.ajustes.rotulo_topo || '';
   const logo = document.querySelector('.logo');
   logo.hidden = !t.logo;
   if (t.logo) logo.src = t.logo;
@@ -132,16 +137,59 @@ function buildScreens() {
   screens = [];
   if (schema.boas_vindas.ativo) screens.push({ kind: 'welcome', key: 'welcome' });
   let n = 0;
-  schema.perguntas.forEach(q => screens.push({ kind: 'question', key: q.id, q, num: q.tipo === 'aviso' ? 0 : ++n }));
+  schema.perguntas.forEach((q, qi) => screens.push({ kind: 'question', key: q.id, q, qi, num: q.tipo === 'aviso' ? 0 : ++n }));
   if (schema.consentimento.ativo) screens.push({ kind: 'consent', key: 'submit' });
   screens.push({ kind: 'done', key: 'done' });
+  if (PREVIEW) screens.push({ kind: 'closed', key: 'closed' }, { kind: 'soon', key: 'soon' });
 }
 
-const isLastInput = i => screens[i + 1]?.kind === 'done';
+const doneIdx = () => screens.findIndex(s => s.kind === 'done');
+const pad2 = n => String(n).padStart(2, '0');
+const isNumbered = s => s.kind === 'question' && s.q.tipo !== 'aviso';
+
+// The screen shown after screens[i], following the branching rules for the answers given so far.
+function nextScreen(i) {
+  const s = screens[i];
+  if (s.kind === 'question') {
+    const ni = CtfRoute.nextIndex(schema.perguntas, s.qi, answers);
+    const target = ni >= schema.perguntas.length ? screens.findIndex(x => x.kind === 'consent' || x.kind === 'done') : screens.findIndex(x => x.kind === 'question' && x.qi === ni);
+    return target > i ? target : i + 1;
+  }
+  return s.kind === 'done' || s.kind === 'closed' || s.kind === 'soon' ? i : i + 1;
+}
+const isLastInput = i => screens[nextScreen(i)]?.kind === 'done';
+
+// Rebuilds the path from the start up to `target` (used when resuming a draft or jumping back to fix an answer).
+function pathTo(target) {
+  const p = [];
+  for (let i = 0, guard = 0; guard <= screens.length; guard++) {
+    p.push(i);
+    if (i === target) return p;
+    const nx = nextScreen(i);
+    if (nx === i) break;
+    i = nx;
+  }
+  return [target];
+}
+
+// Numbered questions still ahead of screens[i] on the current route.
+function remainingAfter(i) {
+  let n = 0;
+  for (let cur = nextScreen(i), guard = 0; screens[cur].kind !== 'done' && guard <= screens.length; guard++) {
+    if (isNumbered(screens[cur])) n++;
+    const nx = nextScreen(cur);
+    if (nx === cur) break;
+    cur = nx;
+  }
+  return n;
+}
+
+// What the respondent sees as "question N": how many numbered questions they have passed, not the position in the form.
+const shownNumber = () => (PREVIEW ? screens[index].num : path.filter(j => isNumbered(screens[j])).length);
 
 function okButton(text = 'OK', withHint = true) {
   return el('div', { class: 'actions' },
-    el('button', { class: 'btn', type: 'button', onclick: next }, text, el('span', { text: '↵' })),
+    el('button', { class: 'btn', type: 'button', onclick: next }, text, el('span', { text: '→' })),
     withHint && el('span', { class: 'hint kbd' }, 'pressione ', el('b', { text: 'Enter ↵' }))
   );
 }
@@ -152,7 +200,8 @@ function welcomeScreen() {
     w.eyebrow && el('p', { class: 'eyebrow', text: w.eyebrow }),
     el('h1', { class: 'title' }, rich(w.titulo)),
     w.texto && el('p', { class: 'lead', text: interp(w.texto) }),
-    okButton(isLastInput(index) ? schema.envio.botao : w.botao)
+    okButton(isLastInput(index) ? schema.envio.botao : w.botao),
+    w.nota && el('p', { class: 'note', text: `[ ${w.nota} ]` })
   );
 }
 
@@ -257,25 +306,69 @@ function questionScreen(s, root) {
       field = el('div', {}, group, other);
       break;
     }
+    case 'dropdown': {
+      // Searchable list: type to filter, arrows to move, Enter to choose.
+      const input = el('input', { class: 'q-input', id: `f-${q.id}`, type: 'text', placeholder: q.placeholder || 'Digite ou escolha uma opção…', autocomplete: 'off', role: 'combobox', 'aria-expanded': 'true', 'aria-labelledby': labelId });
+      const list = el('div', { class: 'dd-list', role: 'listbox', 'aria-labelledby': labelId });
+      let active = -1, shown = q.opcoes;
+      input.value = answers[q.id] || '';
+      const draw = () => {
+        const term = input.value.trim().toLowerCase();
+        shown = answers[q.id] && input.value === answers[q.id] ? q.opcoes : q.opcoes.filter(o => o.toLowerCase().includes(term));
+        list.replaceChildren(...(shown.length ? shown.map((o, i) => {
+          const b = el('button', { class: `dd-opt${i === active ? ' is-active' : ''}`, type: 'button', role: 'option', 'aria-selected': String(answers[q.id] === o), tabindex: '-1' }, el('span', { text: o }));
+          b.addEventListener('click', () => pick(o, b));
+          return b;
+        }) : [el('p', { class: 'dd-empty', text: 'Nenhuma opção encontrada' })]));
+        list.querySelector('.is-active')?.scrollIntoView({ block: 'nearest' });
+      };
+      const pick = (o, btn) => { answers[q.id] = o; input.value = o; clearError(); saveDraft(); draw(); blinkThenNext(btn || input); };
+      input.addEventListener('input', () => { answers[q.id] = ''; active = input.value.trim() ? 0 : -1; clearError(); saveDraft(); draw(); });
+      input.addEventListener('keydown', e => {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          active = Math.max(0, Math.min(shown.length - 1, active + (e.key === 'ArrowDown' ? 1 : -1)));
+          draw();
+        } else if (e.key === 'Enter') {
+          const exact = q.opcoes.find(o => o.toLowerCase() === input.value.trim().toLowerCase());
+          const target = active >= 0 && shown[active] && answers[q.id] !== shown[active] ? shown[active] : (!answers[q.id] && exact);
+          if (target) { e.preventDefault(); e.stopPropagation(); pick(target); }
+        }
+      });
+      draw();
+      field = el('div', {}, input, list);
+      root._focus = input;
+      break;
+    }
     case 'escala': {
       const values = Array.from({ length: q.max - q.min + 1 }, (_, i) => q.min + i);
-      const group = el('div', { class: 'scale', role: 'radiogroup', 'aria-labelledby': labelId, style: `--cols:${Math.min(values.length, 11)}` });
+      const estilo = q.estilo || 'numeros';
+      const faces = CtfRoute.emojis[q.max] || [];
+      const group = el('div', { class: estilo === 'estrelas' ? 'stars' : estilo === 'emojis' ? 'emojis' : 'scale', role: 'radiogroup', 'aria-labelledby': labelId, style: `--cols:${Math.min(values.length, 11)}` });
+      const paint = hover => buttons.forEach((b, j) => {
+        const n = values[j], cur = hover ?? answers[q.id];
+        b.setAttribute('aria-checked', String(answers[q.id] === n));
+        if (estilo === 'estrelas') b.classList.toggle('on', Number.isInteger(cur) && n <= cur);
+      });
       const buttons = values.map((n, i) => {
-        const btn = el('button', { class: 'opt', type: 'button', role: 'radio', style: `--i:${i}`, 'aria-label': `${n} de ${q.max}`, text: String(n) });
-        const choose = () => {
-          answers[q.id] = n;
-          buttons.forEach((b, j) => b.setAttribute('aria-checked', String(values[j] === n)));
-          clearError(); saveDraft();
-          blinkThenNext(btn);
-        };
+        const btn = estilo === 'estrelas'
+          ? el('button', { class: 'star', type: 'button', role: 'radio', 'aria-label': `${n} de ${q.max}`, title: String(n), text: '★' })
+          : estilo === 'emojis'
+            ? el('button', { class: 'emo', type: 'button', role: 'radio', 'aria-label': `${n} de ${q.max}`, title: String(n), text: faces[i] || String(n), style: `--i:${i}` })
+            : el('button', { class: 'opt', type: 'button', role: 'radio', style: `--i:${i}`, 'aria-label': `${n} de ${q.max}`, text: String(n) });
+        const choose = () => { answers[q.id] = n; paint(); clearError(); saveDraft(); blinkThenNext(btn); };
         btn.addEventListener('click', choose);
-        root._keys[String(n % 10)] = choose;
-        btn.setAttribute('aria-checked', String(answers[q.id] === n));
+        if (estilo === 'estrelas') { btn.addEventListener('mouseenter', () => paint(n)); }
+        if (!(n === 10 && q.min === 0)) root._keys[String(n % 10)] = choose; // "0" stays the lowest value on 0–10 scales
         return btn;
       });
+      group.addEventListener('mouseleave', () => paint());
       group.append(...buttons);
-      field = el('div', {}, group, (q.rotulo_min || q.rotulo_max) && el('div', { class: 'scale-labels' },
-        el('span', { text: `${q.min}${q.rotulo_min ? ` · ${q.rotulo_min}` : ''}` }), el('span', { text: `${q.rotulo_max ? `${q.rotulo_max} · ` : ''}${q.max}` })));
+      paint();
+      const lo = q.rotulo_min, hi = q.rotulo_max;
+      const numbered = estilo === 'numeros';
+      field = el('div', {}, group, (lo || hi) && el('div', { class: 'scale-labels' },
+        el('span', { text: numbered ? `${q.min}${lo ? ` · ${lo}` : ''}` : lo }), el('span', { text: numbered ? `${hi ? `${hi} · ` : ''}${q.max}` : hi })));
       break;
     }
   }
@@ -284,7 +377,7 @@ function questionScreen(s, root) {
   const btnText = last ? schema.envio.botao : q.tipo === 'aviso' ? 'Continuar' : !q.obrigatoria && q.tipo === 'longo' ? 'Pular / OK' : 'OK';
   return el('section', {},
     el('div', { class: `q-head${showNum ? '' : ' no-num'}` },
-      showNum && el('span', { class: 'q-num', 'aria-hidden': 'true' }, String(s.num), el('span', { text: '→' })),
+      showNum && el('span', { class: 'q-num', 'aria-hidden': 'true', text: pad2(shownNumber()) }),
       el('h2', { class: 'q-label', id: labelId }, rich(q.rotulo), !q.obrigatoria && q.tipo !== 'aviso' && el('small', { text: '(opcional)' })),
       q.ajuda && el('p', { class: 'q-help', id: helpId, text: interp(q.ajuda) })
     ),
@@ -312,6 +405,24 @@ function consentScreen(root) {
   );
 }
 
+function closedScreen(kind) {
+  if (kind === 'soon') {
+    const e = schema.em_breve;
+    const when = schema.agenda.abre_em ? new Date(schema.agenda.abre_em).toLocaleString('pt-BR', { dateStyle: 'full', timeStyle: 'short' }) : '';
+    return el('section', {},
+      el('p', { class: 'eyebrow', text: 'Em breve' }),
+      el('h1', { class: 'title' }, rich(e.titulo || 'Ainda não abriu')),
+      e.texto && el('p', { class: 'lead', text: e.texto }),
+      when && el('p', { class: 'note', text: `[ abre em ${when} ]` }));
+  }
+  const c = schema.encerrado;
+  return el('section', {},
+    el('p', { class: 'eyebrow', text: 'Encerrado' }),
+    el('h1', { class: 'title' }, rich(c.titulo || 'Formulário encerrado')),
+    c.texto && el('p', { class: 'lead', text: c.texto }),
+    c.cta_url && el('div', { class: 'actions' }, el('a', { class: 'btn', href: c.cta_url, target: '_blank', rel: 'noopener' }, c.cta_texto || 'Saiba mais', el('span', { text: '↗' }))));
+}
+
 function doneScreen() {
   const f = schema.final;
   const src = snapshot || answers;
@@ -319,9 +430,13 @@ function doneScreen() {
   mark.innerHTML = '<svg class="done-mark" viewBox="0 0 84 84" aria-hidden="true"><circle cx="42" cy="42" r="36"/><path d="M27 43l10 10 20-21"/></svg>';
   return el('section', {},
     mark.firstChild,
+    f.etiqueta && el('p', { class: 'eyebrow', text: f.etiqueta }),
     el('h2', { class: 'title' }, rich(f.titulo || 'Obrigado!', src)),
     f.texto && el('p', { class: 'lead', text: interp(f.texto, src) }),
-    f.cta_url && el('div', { class: 'actions' }, el('a', { class: 'btn', href: f.cta_url, target: '_blank', rel: 'noopener' }, f.cta_texto || 'Continuar', el('span', { text: '↗' })))
+    f.cta_url && el('div', { class: 'actions' }, el('a', { class: 'btn', href: f.cta_url, target: '_blank', rel: 'noopener' }, f.cta_texto || 'Continuar', el('span', { text: '↗' }))),
+    redirectTarget && (PREVIEW
+      ? el('p', { class: 'note', text: `[ pré-visualização: a pessoa seria redirecionada para ${redirectTarget} ]` })
+      : el('p', { class: 'note' }, '[ redirecionando… ', el('a', { href: redirectTarget, text: 'ir agora' }), ' ]'))
   );
 }
 
@@ -389,14 +504,17 @@ function next() {
   if (s.kind === 'consent' && !PREVIEW && !answers.consentimento) return showError(root, 'Para enviar, marque a autorização acima.');
   if (s.kind === 'question') track(s.q);
   if (isLastInput(index)) return submit(root);
-  go(index + 1, 1);
+  const target = nextScreen(index);
+  path.push(target);
+  go(target, 1);
 }
 
 function prev() {
-  if (sending || index === 0 || screens[index].kind === 'done') return;
+  if (sending || path.length < 2 || screens[index].kind === 'done') return;
   const s = screens[index];
   if (s.kind === 'question' && !validate(s.q)) track(s.q);
-  go(index - 1, -1);
+  path.pop();
+  go(path[path.length - 1], -1);
 }
 
 function go(target, dir) {
@@ -410,6 +528,7 @@ function go(target, dir) {
   const content = s.kind === 'welcome' ? welcomeScreen()
     : s.kind === 'question' ? questionScreen(s, root)
     : s.kind === 'consent' ? consentScreen(root)
+    : s.kind === 'closed' || s.kind === 'soon' ? closedScreen(s.kind)
     : doneScreen();
   root.append(content);
 
@@ -423,22 +542,23 @@ function go(target, dir) {
   stage.append(root);
   window.scrollTo({ top: 0 });
   updateChrome();
-  if (s.kind !== 'done') saveDraft();
+  if (!['done', 'closed', 'soon'].includes(s.kind)) saveDraft();
   if (animate || !PREVIEW) setTimeout(() => (finePointer && root._focus ? root._focus : root).focus({ preventScroll: true }), reducedMotion ? 0 : 120);
 }
 
 function updateChrome() {
   const s = screens[index];
-  const total = screens.filter(x => x.kind === 'question').length || 1;
-  const before = screens.slice(0, index).filter(x => x.kind === 'question').length;
-  const pct = Math.round((s.kind === 'done' ? 1 : s.kind === 'welcome' ? 0 : s.kind === 'consent' ? 1 : before / total) * 100);
+  const numbered = isNumbered(s);
+  const before = PREVIEW ? s.num - 1 : path.filter(j => isNumbered(screens[j])).length - (numbered ? 1 : 0);
+  const total = PREVIEW ? screens.filter(isNumbered).length || 1 : Math.max(1, before + (numbered ? 1 : 0) + remainingAfter(index));
+  const pct = Math.round((s.kind === 'closed' || s.kind === 'soon' ? 0 : s.kind === 'done' || s.kind === 'consent' ? 1 : s.kind === 'welcome' ? 0 : before / total) * 100);
   bar.classList.toggle('is-off', !schema.ajustes.mostrar_progresso);
   bar.firstElementChild.style.width = `${pct}%`;
   bar.setAttribute('aria-valuenow', String(pct));
   label.replaceChildren();
-  if (schema.ajustes.mostrar_progresso && s.kind === 'question') label.append(el('b', { text: String(before + 1) }), ` / ${total}`);
-  nav.classList.toggle('is-hidden', s.kind === 'welcome' || s.kind === 'done');
-  prevBtn.disabled = index === 0;
+  if (schema.ajustes.mostrar_progresso && numbered) label.append(el('b', { text: pad2(before + 1) }), ` / ${pad2(total)}`);
+  nav.classList.toggle('is-hidden', ['welcome', 'done', 'closed', 'soon'].includes(s.kind));
+  prevBtn.disabled = PREVIEW ? index === 0 : path.length < 2;
   nextBtn.disabled = s.kind === 'consent';
 }
 
@@ -456,7 +576,12 @@ async function submit(root) {
   btn.disabled = true;
   btn.firstChild.textContent = 'Enviando… ';
   const restore = () => { sending = false; btn.disabled = false; btn.firstChild.textContent = original; };
-  if (PREVIEW) { restore(); return go(index + 1, 1); }
+  if (PREVIEW) {
+    restore();
+    const url = CtfRoute.redirectFor(schema.final.redirecionamento, answers);
+    redirectTarget = url.replace(/\{([a-z0-9_]+)\}/gi, (_, k) => encodeURIComponent(display(schema.perguntas.find(q => q.chave === k) || {}, answers[schema.perguntas.find(q => q.chave === k)?.id]) || `{${k}}`));
+    return go(doneIdx(), 1);
+  }
   const { consentimento, ...respostas } = answers;
   try {
     await chain;
@@ -467,15 +592,19 @@ async function submit(root) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
       restore();
+      if (res.status === 403 && data.estado) { restore(); return showState(data.estado); }
       const firstBad = data.campos ? screens.findIndex(s => s.kind === 'question' && data.campos[s.q.id]) : -1;
-      if (firstBad >= 0) { go(firstBad, -1); setTimeout(() => showError(current(), 'Revise esta resposta.'), 450); return; }
+      if (firstBad >= 0) { path = pathTo(firstBad); go(firstBad, -1); setTimeout(() => showError(current(), 'Revise esta resposta.'), 450); return; }
       return showError(root, data.erro || 'Não foi possível enviar. Tente novamente.');
     }
     snapshot = { ...answers };
+    redirectTarget = data.redirect || '';
+    path.push(doneIdx());
     if (schema.ajustes.uma_vez) store.save({ enviado: true, snapshot });
     else store.clear();
     sending = false;
-    go(index + 1, 1);
+    go(doneIdx(), 1);
+    if (redirectTarget) setTimeout(() => { location.href = redirectTarget; }, 1800);
   } catch {
     restore();
     showError(root, 'Sem conexão. Verifique a internet e tente novamente.');
@@ -506,14 +635,23 @@ function start(data, startAt) {
   formTitle = data.titulo || '';
   document.title = formTitle || 'Formulário';
   applyTheme(schema.tema);
+  if (data.estado && data.estado !== 'aberto') return showState(data.estado);
   buildScreens();
   const saved = PREVIEW ? null : store.load();
-  if (saved?.enviado && schema.ajustes.uma_vez) { snapshot = saved.snapshot; return go(screens.length - 1, 1); }
+  if (saved?.enviado && schema.ajustes.uma_vez) { snapshot = saved.snapshot; path = [doneIdx()]; return go(doneIdx(), 1); }
   if (saved?.answers) { answers = saved.answers; rid = saved.rid || null; }
   prefill();
   let target = screens.findIndex(s => s.key === (startAt || saved?.at));
   if (target < 0 || screens[target].kind === 'done') target = 0;
+  path = pathTo(target);
   go(target, 1);
+}
+
+// The form exists but is not accepting answers (closed by hand, not open yet, or past its closing time).
+function showState(estado) {
+  screens = [{ kind: estado === 'em_breve' ? 'soon' : 'closed', key: 'state' }];
+  path = [0];
+  go(0, 1);
 }
 
 function showFailure(title, text) {
@@ -532,6 +670,8 @@ if (PREVIEW) {
     applyTheme(schema.tema);
     buildScreens();
     const target = screens.findIndex(s => s.key === keep);
+    path = [target < 0 ? 0 : target];
+    if (screens[path[0]]?.kind !== 'done') redirectTarget = '';
     go(target < 0 ? 0 : target, 0);
   });
   parent.postMessage({ type: 'ctf-ready' }, location.origin);

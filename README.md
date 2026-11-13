@@ -117,3 +117,7 @@ domínio próprio por formulário, múltiplos usuários.
 - **Textos:** `{chave}` cita uma resposta; `{chave|min}` deixa a primeira letra minúscula; cada linha de texto da tela final vira um parágrafo.
 - **Webhook de conclusão:** além das respostas, envia `pontuacao` (pontos por variável), `tags` (variáveis que atingiram o “marcar quando ≥”) e `resultado` (chave do resultado mostrado). As respostas de matriz chegam como objeto por letra.
 - **Dashboard e CSV:** a matriz aparece com a distribuição por linha; o CSV ganha colunas `pontos_<variável>`, `tags` e `resultado`.
+
+## Rastreio do clique no botão do resultado
+
+O botão da tela de resultado aponta para `/go/<id da resposta>`, que registra o primeiro clique e redireciona ao link do produto (cliques de robôs de pré-visualização, como o do WhatsApp, não contam). O webhook `form.completed` passa a levar `link_resultado` (link rastreado), `link_destino` e `verificar_clique`. Um GET em `/api/clique/<id>` devolve `{ "clicou": true|false, "clicou_em": ... }`, o que permite ao n8n esperar alguns minutos e só lembrar quem não clicou. Defina `PUBLIC_URL` (ex.: `https://form.metodoignis.com.br`) para que os links saiam com o endereço correto atrás do proxy.

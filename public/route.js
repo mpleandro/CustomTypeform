@@ -29,6 +29,7 @@
   const norm = x => String(x).trim().toLowerCase();
   function condMatches(c, answers) {
     let v = answers[c.pergunta];
+    if (c.linha) v = v && typeof v === 'object' ? v[c.linha] : undefined; // matrix: compare one row
     if (v && typeof v === 'object' && !Array.isArray(v)) v = v.uf; // city/state answers compare by state
     const has = v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && !v.length);
     const hasValue = () => (Array.isArray(v) ? v.includes(c.valor) : has && norm(v) === norm(c.valor));
@@ -50,7 +51,7 @@
     return cfg.url_padrao || '';
   }
 
-  const api = { nextIndex, visited, emojis, redirectFor };
+  const api = { nextIndex, visited, emojis, redirectFor, condMatches };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.CtfRoute = api;
 })(typeof self !== 'undefined' ? self : this);

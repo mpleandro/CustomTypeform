@@ -50,6 +50,7 @@ export const TIPOS = {
   unica: { nome: 'Escolha única', sigla: '◉', desc: 'Uma opção entre várias' },
   dropdown: { nome: 'Lista suspensa', sigla: '▾', desc: 'Lista pesquisável, ideal para muitas opções' },
   multipla: { nome: 'Múltipla escolha', sigla: '☑', desc: 'Várias opções' },
+  matriz: { nome: 'Matriz (grade)', sigla: '▦', desc: 'Várias afirmações com a mesma escala de resposta' },
   sim_nao: { nome: 'Sim / Não', sigla: '±', desc: 'Duas opções' },
   escala: { nome: 'Avaliação', sigla: '★', desc: 'Números, estrelas ou emojis (NPS e satisfação)' },
   aviso: { nome: 'Mensagem', sigla: 'i', desc: 'Texto sem resposta' }
@@ -67,7 +68,7 @@ export function fmtDur(s) {
   return m < 60 ? `${m}min ${pad(s % 60)}s` : `${Math.floor(m / 60)}h ${pad(m % 60)}min`;
 }
 export const formUrl = slug => `${location.origin}/f/${slug}`;
-export const display = v => (v === undefined || v === null || v === '' ? '' : Array.isArray(v) ? v.join(', ') : typeof v === 'object' ? `${v.cidade}/${v.uf}` : String(v));
+export const display = v => (v === undefined || v === null || v === '' ? '' : Array.isArray(v) ? v.join(', ') : typeof v === 'object' ? (v.cidade !== undefined || v.uf !== undefined ? `${v.cidade}/${v.uf}` : Object.entries(v).map(([k, x]) => `${k}: ${x}`).join(' | ')) : String(v));
 export const plain = text => String(text || '').replace(/\*/g, '').trim();
 
 // Like replaceChildren, but flattens arrays and skips false/null (native replaceChildren stringifies them).

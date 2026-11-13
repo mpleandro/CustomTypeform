@@ -92,6 +92,9 @@ export async function renderResults(id, { mount, shell, setCleanup }) {
           el('div', { class: 'bar' }, el('i', { style: `width:${(d.n / top) * 100}%` }))))));
       }
       if (q.avg !== undefined && q.avg !== null) body.append(el('p', { style: 'margin:12px 0 0;font-weight:600', text: q.tipo === 'numero' ? `Média ${q.avg.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} · mín ${q.min} · máx ${q.max}` : `Média ${q.avg.toFixed(2).replace('.', ',')}` }));
+      if (q.linhas) body.append(el('div', { class: 'dist' }, q.linhas.map(l => el('div', { style: 'margin-bottom:14px' }, el('small', { text: l.label }),
+      l.dist.map(d => el('div', { class: 'd' }, el('span', { text: d.label }), el('b', { text: `${fmtNum(d.n)}${q.answered ? ` · ${fmtPct(d.n / q.answered)}` : ''}` }),
+      el('div', { class: 'bar' }, el('i', { style: `width:${(d.n / Math.max(1, ...l.dist.map(x => x.n))) * 100}%` }))))))));
       if (q.latest) body.append(q.latest.length ? el('ul', { class: 'latest' }, q.latest.map(t => el('li', { text: t, title: t }))) : el('p', { class: 'hint', style: 'margin-top:12px', text: 'Sem respostas ainda.' }));
       return el('div', { class: 'card qcard' },
         el('h3', { text: `${q.n}. ${plain(q.rotulo) || 'Sem título'}` }),
@@ -174,6 +177,8 @@ export async function renderResults(id, { mount, shell, setCleanup }) {
         return el('div', { class: 'qa' }, el('small', { text: `${pos + 1}. ${plain(q.rotulo) || q.chave}` }),
           el('div', { class: v ? '' : 'muted', text: v ? (other ? `${v}: ${other}` : v) : skipped ? '— pulada pela navegação' : '—' }));
       }),
+      r.answers._pontuacao && el('div', { class: 'qa' }, el('small', { text: 'Pontuação' }),
+      el('div', { text: `${Object.entries(r.answers._pontuacao.pontos || {}).map(([k, n]) => `${k}: ${n}`).join(' · ')}${(r.answers._pontuacao.tags || []).length ? ` · tag: ${r.answers._pontuacao.tags.join(', ')}` : ''} → resultado: ${r.answers._pontuacao.resultado || '—'}` })),
       past.length > 0 && el('div', { class: 'qa' }, el('small', { text: 'Respostas passadas (perguntas removidas)' }),
         past.map(q => el('div', { style: 'margin:8px 0 0' }, el('small', { text: plain(q.rotulo) || q.chave }), el('div', { text: display(r.answers[q.id]) })))),
       Object.keys(r.meta || {}).length > 0 && el('div', { class: 'qa' }, el('small', { text: 'Rastreio' }), el('div', { class: 'mono', style: 'font-size:12px' }, Object.entries(r.meta).map(([k, v]) => el('div', { text: `${k}: ${v}` })))),

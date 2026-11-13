@@ -23,6 +23,8 @@ const finePointer = matchMedia('(pointer: fine)').matches;
 let schema, formTitle = '';
 let screens = [];
 let index = 0;
+let resultado = null; // result block (by score) chosen by the server after sending
+let previewResult = 0; // which result the editor preview shows
 let redirectTarget = ''; // where to send the respondent after the thank-you screen (conditional redirect)
 let path = []; // screen indexes the respondent has gone through, in order (branching skips questions)
 let answers = {};
@@ -59,17 +61,20 @@ function el(tag, attrs = {}, ...children) {
 function display(q, v) {
   if (v === undefined || v === null || v === '') return '';
   if (Array.isArray(v)) return v.join(', ');
-  if (typeof v === 'object') return v.cidade && v.uf ? `${v.cidade}/${v.uf}` : '';
+  if (typeof v === 'object') return v.cidade && v.uf ? `${v.cidade}/${v.uf}` : v.cidade === undefined ? Object.entries(v).map(([k, x]) => `${k}: ${x}`).join(' | ') : '';
   return String(v);
 }
 
 // {chave} recalls an earlier answer; {primeiro_nome} is the first word of the answer whose key is "nome".
 function interp(text, source = answers) {
   const byKey = {};
-  for (const q of schema.perguntas) byKey[q.chave] = display(q, source[q.id]);
+  for (const q of schema.perguntas) byKey[q.chave] = source[q.id] === 'Outra' && source[`${q.id}_outra`] ? source[`${q.id}_outra`] : display(q, source[q.id]);
   const first = (byKey.nome || '').trim().split(/\s+/)[0] || (PREVIEW ? 'Maria' : '');
   return String(text || '')
-    .replace(/\{([a-z0-9_]+)\}/g, (_, k) => (k === 'primeiro_nome' ? first : byKey[k] ?? ''))
+    .replace(/\{([a-z0-9_]+)(\|min)?\}/g, (_, k, lower) => {
+    const t = k === 'primeiro_nome' ? first : byKey[k] ?? '';
+    return lower ? t.charAt(0).toLowerCase() + t.slice(1) : t;
+    })
     .replace(/\s+([,.!?])/g, '$1').replace(/,\s*([.!?])/g, '$1');
 }
 
@@ -310,11 +315,18 @@ function questionScreen(s, root) {
       // Searchable list: type to filter, arrows to move, Enter to choose.
       const input = el('input', { class: 'q-input', id: `f-${q.id}`, type: 'text', placeholder: q.placeholder || 'Digite ou escolha uma opção…', autocomplete: 'off', role: 'combobox', 'aria-expanded': 'true', 'aria-labelledby': labelId });
       const list = el('div', { class: 'dd-list', role: 'listbox', 'aria-labelledby': labelId });
-      let active = -1, shown = q.opcoes;
+      const allOpts = q.outra ? [...q.opcoes, 'Outra'] : q.opcoes;
+      const other = q.outra ? el('input', { class: 'q-input other', type: 'text', placeholder: 'Qual?', 'aria-label': 'Outra resposta' }) : null;
+      if (other) {
+      other.hidden = answers[q.id] !== 'Outra';
+      other.value = answers[`${q.id}_outra`] || '';
+      other.addEventListener('input', () => { answers[`${q.id}_outra`] = other.value; clearError(); saveDraft(); });
+      }
+      let active = -1, shown = allOpts;
       input.value = answers[q.id] || '';
       const draw = () => {
         const term = input.value.trim().toLowerCase();
-        shown = answers[q.id] && input.value === answers[q.id] ? q.opcoes : q.opcoes.filter(o => o.toLowerCase().includes(term));
+        shown = answers[q.id] && input.value === answers[q.id] ? allOpts : allOpts.filter(o => o.toLowerCase().includes(term));
         list.replaceChildren(...(shown.length ? shown.map((o, i) => {
           const b = el('button', { class: `dd-opt${i === active ? ' is-active' : ''}`, type: 'button', role: 'option', 'aria-selected': String(answers[q.id] === o), tabindex: '-1' }, el('span', { text: o }));
           b.addEventListener('click', () => pick(o, b));
@@ -322,23 +334,49 @@ function questionScreen(s, root) {
         }) : [el('p', { class: 'dd-empty', text: 'Nenhuma opção encontrada' })]));
         list.querySelector('.is-active')?.scrollIntoView({ block: 'nearest' });
       };
-      const pick = (o, btn) => { answers[q.id] = o; input.value = o; clearError(); saveDraft(); draw(); blinkThenNext(btn || input); };
-      input.addEventListener('input', () => { answers[q.id] = ''; active = input.value.trim() ? 0 : -1; clearError(); saveDraft(); draw(); });
+      const pick = (o, btn) => {
+      answers[q.id] = o; input.value = o; clearError(); saveDraft(); draw();
+      if (other) other.hidden = o !== 'Outra';
+      if (o === 'Outra') { other.focus(); return; }
+      blinkThenNext(btn || input);
+      };
+      input.addEventListener('input', () => { answers[q.id] = ''; if (other) other.hidden = true; active = input.value.trim() ? 0 : -1; clearError(); saveDraft(); draw(); });
       input.addEventListener('keydown', e => {
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
           e.preventDefault();
           active = Math.max(0, Math.min(shown.length - 1, active + (e.key === 'ArrowDown' ? 1 : -1)));
           draw();
         } else if (e.key === 'Enter') {
-          const exact = q.opcoes.find(o => o.toLowerCase() === input.value.trim().toLowerCase());
+          const exact = allOpts.find(o => o.toLowerCase() === input.value.trim().toLowerCase());
           const target = active >= 0 && shown[active] && answers[q.id] !== shown[active] ? shown[active] : (!answers[q.id] && exact);
           if (target) { e.preventDefault(); e.stopPropagation(); pick(target); }
         }
       });
       draw();
-      field = el('div', {}, input, list);
+      field = el('div', {}, input, list, other);
       root._focus = input;
       break;
+    }
+    case 'matriz': {
+    // Grid: one screen, several statements answered on the same scale (A, B, C...).
+    const cols = q.opcoes, rows = q.linhas || [];
+    const grid = el('div', { class: 'matrix', style: `--cols:${cols.length}`, role: 'group', 'aria-labelledby': labelId },
+    el('div', { class: 'mx-head', 'aria-hidden': 'true' }, el('span'), cols.map(c => el('span', { text: c }))));
+    rows.forEach((txt, ri) => {
+    const key = LETTERS[ri];
+    const cells = cols.map(c => el('button', { class: 'mx-opt', type: 'button', role: 'radio', 'aria-label': c }, el('i', { 'aria-hidden': 'true' }), el('span', { text: c })));
+    const paint = () => cells.forEach((b, ci) => b.setAttribute('aria-checked', String((answers[q.id] || {})[key] === cols[ci])));
+    cells.forEach((b, ci) => b.addEventListener('click', () => {
+    answers[q.id] = { ...(answers[q.id] || {}), [key]: cols[ci] };
+    paint(); clearError(); saveDraft();
+    }));
+    paint();
+    grid.append(el('div', { class: 'mx-row', role: 'radiogroup', 'aria-label': interp(txt) },
+    el('p', { class: 'mx-label' }, el('b', { text: key }), interp(txt)), el('div', { class: 'mx-cells' }, cells)));
+    });
+    field = grid;
+    root._focus = grid.querySelector('.mx-opt');
+    break;
     }
     case 'escala': {
       const values = Array.from({ length: q.max - q.min + 1 }, (_, i) => q.min + i);
@@ -423,6 +461,23 @@ function closedScreen(kind) {
     c.cta_url && el('div', { class: 'actions' }, el('a', { class: 'btn', href: c.cta_url, target: '_blank', rel: 'noopener' }, c.cta_texto || 'Saiba mais', el('span', { text: '↗' }))));
 }
 
+// Each line of a text becomes its own paragraph (the final screens use several lines).
+function paras(text, src) {
+return String(text || '').split(/\n+/).map(t => interp(t, src).trim()).filter(Boolean).map(t => el('p', { class: 'lead', text: t }));
+}
+
+// Result chosen by score: the server sends only the one that matched; the editor preview shows the one picked there.
+function resultadoBox(src) {
+const r = PREVIEW ? (schema.pontuacao?.resultados || [])[previewResult] : resultado;
+if (!r) return null;
+const showButton = r.botao_texto && (PREVIEW || r.botao_url);
+return el('div', { class: 'result' },
+r.titulo && el('h3', { class: 'result-title' }, rich(r.titulo, src)),
+...paras(r.texto, src),
+r.produto && el('p', { class: 'result-product', text: interp(r.produto, src) }),
+showButton && el('div', { class: 'actions' }, el('a', { class: 'btn', href: PREVIEW ? '#' : r.botao_url, target: '_blank', rel: 'noopener' }, r.botao_texto, el('span', { text: '↗' }))));
+}
+
 function doneScreen() {
   const f = schema.final;
   const src = snapshot || answers;
@@ -432,7 +487,8 @@ function doneScreen() {
     mark.firstChild,
     f.etiqueta && el('p', { class: 'eyebrow', text: f.etiqueta }),
     el('h2', { class: 'title' }, rich(f.titulo || 'Obrigado!', src)),
-    f.texto && el('p', { class: 'lead', text: interp(f.texto, src) }),
+    ...paras(f.texto, src),
+    resultadoBox(src),
     f.cta_url && el('div', { class: 'actions' }, el('a', { class: 'btn', href: f.cta_url, target: '_blank', rel: 'noopener' }, f.cta_texto || 'Continuar', el('span', { text: '↗' }))),
     redirectTarget && (PREVIEW
       ? el('p', { class: 'note', text: `[ pré-visualização: a pessoa seria redirecionada para ${redirectTarget} ]` })
@@ -460,6 +516,8 @@ function validate(q) {
   }
   if (empty || (typeof v === 'string' && !v.trim())) return q.obrigatoria ? 'Por favor, responda esta pergunta.' : '';
   switch (q.tipo) {
+    case 'dropdown': return v === 'Outra' && !(answers[`${q.id}_outra`] || '').trim() ? 'Conte qual é a sua resposta.' : '';
+    case 'matriz': return Object.keys(v).length < (q.linhas || []).length ? 'Responda todas as afirmações.' : '';
     case 'email': return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()) ? '' : 'Esse e-mail não parece válido.';
     case 'telefone': { const n = v.replace(/\D/g, '').length; return n >= 10 && n <= 11 ? '' : 'Informe o número com DDD.'; }
     case 'numero': return Number.isFinite(Number(v.replace(',', '.'))) ? '' : 'Digite apenas números.';
@@ -599,8 +657,9 @@ async function submit(root) {
     }
     snapshot = { ...answers };
     redirectTarget = data.redirect || '';
+    resultado = data.resultado || null;
     path.push(doneIdx());
-    if (schema.ajustes.uma_vez) store.save({ enviado: true, snapshot });
+    if (schema.ajustes.uma_vez) store.save({ enviado: true, snapshot, resultado });
     else store.clear();
     sending = false;
     go(doneIdx(), 1);
@@ -638,7 +697,7 @@ function start(data, startAt) {
   if (data.estado && data.estado !== 'aberto') return showState(data.estado);
   buildScreens();
   const saved = PREVIEW ? null : store.load();
-  if (saved?.enviado && schema.ajustes.uma_vez) { snapshot = saved.snapshot; path = [doneIdx()]; return go(doneIdx(), 1); }
+  if (saved?.enviado && schema.ajustes.uma_vez) { snapshot = saved.snapshot; resultado = saved.resultado || null; path = [doneIdx()]; return go(doneIdx(), 1); }
   if (saved?.answers) { answers = saved.answers; rid = saved.rid || null; }
   prefill();
   let target = screens.findIndex(s => s.key === (startAt || saved?.at));
@@ -662,7 +721,8 @@ if (PREVIEW) {
   // The editor sends the whole schema on every change; re-render in place without animations.
   addEventListener('message', event => {
     if (event.origin !== location.origin || event.data?.type !== 'ctf-schema') return;
-    const { schema: next, titulo, goto } = event.data;
+    const { schema: next, titulo, goto, resultado: pr } = event.data;
+    previewResult = Number.isInteger(pr) ? pr : 0;
     if (!schema) return start({ schema: next, titulo }, goto);
     const keep = goto || screens[index]?.key;
     schema = next;

@@ -164,3 +164,29 @@ select.q-input option{background:var(--bg);color:var(--fg)}
   .nav{bottom:max(14px,env(safe-area-inset-bottom))}
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-delay:0ms!important;transition-duration:.01ms!important}}
+/* ---- matriz (grade de afirmações) ---- */
+.matrix { display: grid; gap: 4px; margin-top: 8px; }
+.mx-head, .mx-row { display: grid; grid-template-columns: minmax(0, 1.6fr) repeat(var(--cols), minmax(0, 1fr)); align-items: center; gap: 8px; }
+.mx-head span { font-size: 12px; line-height: 1.2; text-align: center; opacity: .65; }
+.mx-row { padding: 14px 0; border-top: 1px solid color-mix(in srgb, var(--fg) 14%, transparent); }
+.mx-label { margin: 0; font-size: 1.05rem; line-height: 1.35; }
+.mx-label b { margin-right: 8px; font-family: 'JetBrains Mono', monospace; color: var(--accent); }
+.mx-cells { display: contents; }
+.mx-opt { position: relative; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 6px; font: inherit; color: inherit; cursor: pointer; background: transparent; border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent); border-radius: var(--radius); transition: border-color .15s, background .15s; }
+.mx-opt i { flex: none; width: 16px; height: 16px; border: 2px solid currentColor; border-radius: 50%; opacity: .55; }
+.mx-opt span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.mx-opt:hover { border-color: var(--accent); }
+.mx-opt[aria-checked="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: var(--accent); }
+.mx-opt[aria-checked="true"] i { background: var(--accent); border-color: var(--accent); opacity: 1; }
+@media (max-width: 720px) {
+.mx-head { display: none; }
+.mx-row { grid-template-columns: 1fr; }
+.mx-cells { display: grid; gap: 6px; }
+.mx-opt { justify-content: flex-start; padding: 10px 12px; }
+.mx-opt span { position: static; width: auto; height: auto; overflow: visible; clip: auto; text-align: left; }
+}
+/* ---- resultado por pontuação (tela final) ---- */
+.result { margin-top: 28px; padding-top: 24px; border-top: 1px solid color-mix(in srgb, var(--fg) 18%, transparent); }
+.result-title { margin: 0 0 14px; font-size: clamp(1.5rem, 4vw, 2.2rem); line-height: 1.15; }
+.result-title em { font-style: normal; color: var(--accent); }
+.result-product { margin: 16px 0 0; font-family: 'JetBrains Mono', monospace; font-size: .85rem; letter-spacing: .04em; color: var(--accent); }

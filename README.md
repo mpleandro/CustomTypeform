@@ -108,3 +108,12 @@ URLs de webhook, segredos e regras de redirecionamento nunca vão para o navegad
 ## Próximos passos possíveis
 Lógica condicional (“se responder X, vá para Y”), mais tipos (upload, avaliação com estrelas, imagem como opção),
 domínio próprio por formulário, múltiplos usuários.
+
+## Quiz com pontuação (matriz, “Outra” na lista suspensa, resultados por pontuação)
+
+- **Matriz (grade):** várias afirmações numa só tela, com as mesmas colunas de resposta. Cada linha recebe uma letra (A, B, C…) e a resposta é salva como `{ "A": "Concordo", … }`.
+- **Lista suspensa com “Outra”:** ative “Incluir opção Outra” na pergunta; a pessoa digita a resposta livre.
+- **Pontuação e resultados** (item “Pontuação e resultados” no editor): crie variáveis (ex.: oferta, tese, volume, vulcan), regras de pontos por resposta (inclusive por linha de uma matriz) e telas de resultado. O primeiro resultado cujas condições combinarem (de cima para baixo) aparece depois da abertura da tela final; o último, sem condições, vale como padrão. As regras ficam no servidor.
+- **Textos:** `{chave}` cita uma resposta; `{chave|min}` deixa a primeira letra minúscula; cada linha de texto da tela final vira um parágrafo.
+- **Webhook de conclusão:** além das respostas, envia `pontuacao` (pontos por variável), `tags` (variáveis que atingiram o “marcar quando ≥”) e `resultado` (chave do resultado mostrado). As respostas de matriz chegam como objeto por letra.
+- **Dashboard e CSV:** a matriz aparece com a distribuição por linha; o CSV ganha colunas `pontos_<variável>`, `tags` e `resultado`.

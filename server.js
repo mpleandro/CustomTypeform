@@ -9,9 +9,10 @@ const { createStore } = require('./lib/db');
 const { createAuth, createLimiter } = require('./lib/auth');
 const { createWebhooks } = require('./lib/webhooks');
 const schemaLib = require('./lib/schema');
-const { checkAnswer, isText } = require('./lib/validate');
+const { checkAnswer, matrixComplete, isText } = require('./lib/validate');
 const stats = require('./lib/stats');
 const routing = require('./public/route.js');
+const score = require('./lib/score');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -129,7 +130,7 @@ function fireQuestionHook(form, q, response, value, outra) {
     }
   });
 }
-function fireCompleteHook(form, response) {
+function fireCompleteHook(form, response, pts) {
   const w = form.schema.ajustes.webhook;
   if (!w.ao_concluir || !w.url) return;
   hooks.dispatch({
@@ -137,6 +138,7 @@ function fireCompleteHook(form, response) {
     payload: {
       evento: 'form.completed', enviado_em: new Date().toISOString(), formulario: formSummary(form), resposta_id: response.id,
       iniciada_em: response.started_at, concluida_em: response.completed_at,
+      ...(pts ? { pontuacao: pts.pontos, tags: pts.tags, resultado: pts.resultado?.chave || '' } : {}),
       respostas: stats.keyed(form.schema, response.answers), meta: response.meta
     }
   });
@@ -240,6 +242,7 @@ const publicRoutes = {
       if (q.tipo === 'aviso') continue;
       if (bad[q.id]) errors[q.id] = bad[q.id];
       else if (clean[q.id] === undefined) { if (q.obrigatoria) errors[q.id] = 'obrigatória'; }
+      else if (q.tipo === 'matriz' && q.obrigatoria && !matrixComplete(q, clean[q.id])) errors[q.id] = 'obrigatória';
       else { answers[q.id] = clean[q.id]; if (clean[`${q.id}_outra`]) answers[`${q.id}_outra`] = clean[`${q.id}_outra`]; }
     }
     if (f.schema.consentimento.ativo && body.consentimento !== true) errors.consentimento = 'obrigatório';
@@ -257,6 +260,9 @@ const publicRoutes = {
     const current = new Set(qs.map(q => q.id));
     const kept = Object.fromEntries(Object.entries(before).filter(([k]) => !current.has(k.replace(/_outra$/, ''))));
     r.answers = { ...kept, ...answers };
+    // Score: points per variable, lead tags and the result screen are decided here (rules never reach the browser).
+    const pts = score.compute(f.schema, answers);
+    if (pts) r.answers._pontuacao = { pontos: pts.pontos, tags: pts.tags, resultado: pts.resultado?.chave || '' };
     r.completed_at = new Date().toISOString();
     r.started_at = store.getResponse(r.id, f.id).started_at;
     store.saveResponse(r);
@@ -264,10 +270,14 @@ const publicRoutes = {
     for (const q of qs) {
       if (answers[q.id] !== undefined && !sameJson(before[q.id], answers[q.id])) fireQuestionHook(f, q, r, answers[q.id], answers[`${q.id}_outra`]);
     }
-    fireCompleteHook(f, r);
+    fireCompleteHook(f, r, pts);
     // Conditional redirect: chosen here so the rules and URLs never reach the browser unless they match.
     const target = routing.redirectFor(f.schema.final.redirecionamento, answers);
-    json(res, 200, { ok: true, redirect: target ? fillUrl(target, f.schema, answers, r.id) : '' });
+    const chosen = pts?.resultado;
+    json(res, 200, {
+    ok: true, redirect: target ? fillUrl(target, f.schema, answers, r.id) : '',
+    resultado: chosen ? { titulo: chosen.titulo, texto: chosen.texto, produto: chosen.produto, botao_texto: chosen.botao_texto, botao_url: chosen.botao_url ? fillUrl(chosen.botao_url, f.schema, answers, r.id) : '' } : null
+    });
   }
 };
 
@@ -294,6 +304,7 @@ const adminRoutes = [
       const map = {};
       for (const q of schema.perguntas) { map[q.id] = schemaLib.newId(); }
       const w = schema.ajustes.webhook;
+      for (const rg of schema.pontuacao?.regras || []) rg.pergunta = map[rg.pergunta] || rg.pergunta;
       w.pergunta = map[w.pergunta] || '';
       for (const rule of schema.final.redirecionamento.regras) for (const c of rule.condicoes) c.pergunta = map[c.pergunta] || c.pergunta;
       schema.agenda = { abre_em: '', fecha_em: '' };

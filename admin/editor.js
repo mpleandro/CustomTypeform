@@ -16,7 +16,7 @@ const FONTS = ['Inter', 'Manrope', 'DM Sans', 'Poppins', 'Montserrat', 'Space Gr
 const TOKENS_HINT = 'Use *palavra* para destacar na cor do tema e {chave} para citar uma resposta anterior (ex.: {primeiro_nome}).';
 
 const branchValuesOf = q => (q.tipo === 'unica' ? [...q.opcoes.filter(Boolean), ...(q.outra ? ['Outra'] : [])]
-  : q.tipo === 'dropdown' ? q.opcoes.filter(Boolean)
+  : q.tipo === 'dropdown' ? q.opcoes.filter(Boolean).concat(q.outra ? ['Outra'] : [])
   : q.tipo === 'sim_nao' ? ['Sim', 'Não']
   : q.tipo === 'escala' ? Array.from({ length: q.max - q.min + 1 }, (_, k) => String(q.min + k)) : []);
 const faceFor = (q, n) => (q.estilo === 'emojis' ? `${window.CtfRoute.emojis[q.max]?.[n - 1] || ''} ${n}` : q.estilo === 'estrelas' ? `${n} ★` : String(n));
@@ -78,10 +78,10 @@ export async function renderEditor(id, { mount, setCleanup }) {
   /* ----- preview ----- */
   const frame = el('iframe', { class: 'pv-frame', src: '/preview', title: 'Pré-visualização' });
   let ready = false;
-  const previewKey = () => (S.sel === 'envio' ? 'submit' : S.sel === 'final' ? 'done' : S.sel === 'encerrado' ? S.previewSub : S.sel);
+  const previewKey = () => (S.sel === 'envio' ? 'submit' : S.sel === 'final' || S.sel === 'pontuacao' ? 'done' : S.sel === 'encerrado' ? S.previewSub : S.sel);
   function sendPreview() {
     if (!ready) return;
-    frame.contentWindow?.postMessage({ type: 'ctf-schema', schema: sch(), titulo: S.titulo, goto: S.tab === 'conteudo' ? previewKey() : undefined }, location.origin);
+    frame.contentWindow?.postMessage({ type: 'ctf-schema', schema: sch(), titulo: S.titulo, goto: S.tab === 'conteudo' ? previewKey() : undefined, resultado: S.resIdx || 0 }, location.origin);
   }
   const onMessage = e => { if (e.origin === location.origin && e.data?.type === 'ctf-ready') { ready = true; sendPreview(); } };
   const onBeforeUnload = e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } };
@@ -244,7 +244,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
   function addQuestion(tipo, after = sch().perguntas.length - 1) {
     const q = {
       id: newId(), chave: uniqueKey(`pergunta_${sch().perguntas.length + 1}`), tipo, rotulo: '', ajuda: '', obrigatoria: false, placeholder: '',
-      opcoes: CHOICE.includes(tipo) ? ['Opção 1', 'Opção 2'] : [], outra: false, exclusivas: [], compacta: false,
+      opcoes: CHOICE.includes(tipo) ? ['Opção 1', 'Opção 2'] : tipo === 'matriz' ? ['Discordo', 'Neutro', 'Concordo'] : [], linhas: tipo === 'matriz' ? ['Afirmação 1', 'Afirmação 2'] : [], outra: false, exclusivas: [], compacta: false,
       estilo: 'numeros', min: 1, max: 5, rotulo_min: '', rotulo_max: '', prefill: [], proxima: '', ramos: {}, _auto: true
     };
     sch().perguntas.splice(after + 1, 0, q);
@@ -264,6 +264,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
       el('div', { class: 'list-sep', text: 'Fim' }),
       item('envio', '↗', 'Envio e consentimento'),
       item('final', '✓', 'Tela final e redirecionamento'),
+      item('pontuacao', '∑', 'Pontuação e resultados'),
       item('encerrado', '⏱', 'Agenda e encerramento'));
   }
 
@@ -278,6 +279,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
     else if (S.tab === 'ajustes') content = settingsPanel();
     else if (S.sel === 'welcome') content = welcomePanel();
     else if (S.sel === 'envio') content = envioPanel();
+    else if (S.sel === 'pontuacao') content = pontuacaoPanel();
     else if (S.sel === 'final') content = finalPanel();
     else if (S.sel === 'encerrado') content = encerradoPanel();
     else {
@@ -316,6 +318,159 @@ export async function renderEditor(id, { mount, setCleanup }) {
       field('Texto do botão de envio', text(e, 'botao')));
   }
 
+  /* ----- matrix rows ----- */
+  const LET = 'ABCDEFGHIJKL';
+  function linesEditor(q) {
+  const holder = el('div');
+  const draw = focus => fill(holder,
+  q.linhas.map((txt, i) => {
+  const input = el('input', { class: 'input', value: txt, placeholder: `Afirmação ${i + 1}` });
+  input.addEventListener('input', () => { q.linhas[i] = input.value; touch(); });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); q.linhas.splice(i + 1, 0, ''); draw(i + 1); touch(); } });
+  if (focus === i) setTimeout(() => input.focus(), 0);
+  return el('div', { class: 'opt-row' }, el('b', { class: 'mono', text: LET[i] || '', style: 'width:20px' }), input,
+  el('button', { class: 'icon-btn', type: 'button', title: 'Remover', onclick: () => { q.linhas.splice(i, 1); draw(); touch(); } }, '✕'));
+  }),
+  q.linhas.length < 12 && el('button', { class: 'btn sm', type: 'button', onclick: () => { q.linhas.push(''); draw(q.linhas.length - 1); touch(); } }, '+ Adicionar linha'));
+  draw();
+  return holder;
+  }
+
+  /* ----- scoring: variables, point rules and result screens ----- */
+  const CMP_OPS = [['gte', '≥ maior ou igual a'], ['gt', '> maior que'], ['lte', '≤ menor ou igual a'], ['lt', '< menor que'], ['eq', '= igual a'], ['ne', '≠ diferente de']];
+  const rowStyle = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px';
+  const rid = prefix => `${prefix}${Math.random().toString(16).slice(2, 10)}`;
+
+  function pontuacaoPanel() {
+  const P = sch().pontuacao;
+  const holder = el('div');
+  const answerable = () => sch().perguntas.filter(q => q.tipo !== 'aviso');
+  const qLabel = q => `Pergunta ${sch().perguntas.indexOf(q) + 1} — ${plain(q.rotulo).slice(0, 40) || 'sem título'}`;
+  const pick = (value, options, onchange) => {
+  const node = el('select', { class: 'select', style: 'width:auto;max-width:100%' }, options.map(([v, l]) => el('option', { value: v, text: l })));
+  node.value = value;
+  node.addEventListener('change', () => { onchange(node.value); touch(); });
+  return node;
+  };
+  const varOptions = () => P.variaveis.map(v => [v.chave, v.nome || v.chave]);
+  const uniqueVar = base => { let k = base, n = 2; while (P.variaveis.some(v => v.chave === k)) k = `${base}_${n++}`; return k; };
+
+  const dropVar = v => {
+  P.regras = P.regras.filter(r => r.variavel !== v.chave);
+  for (const res of P.resultados) res.condicoes = res.condicoes.filter(c => c.variavel !== v.chave && c.com !== `var:${v.chave}`);
+  P.variaveis = P.variaveis.filter(x => x !== v);
+  };
+  const renameVar = (v, next) => {
+  const old = v.chave;
+  v.chave = next;
+  for (const r of P.regras) if (r.variavel === old) r.variavel = next;
+  for (const res of P.resultados) for (const c of res.condicoes) { if (c.variavel === old) c.variavel = next; if (c.com === `var:${old}`) c.com = `var:${next}`; }
+  };
+
+  const variablesSection = () => el('div', { class: 'section' }, el('h3', { text: 'Variáveis (eixos de pontuação)' }),
+  el('p', { class: 'hint', style: 'margin-bottom:12px', text: 'Cada variável soma pontos conforme as respostas (ex.: oferta, tese, volume, vulcan). Em “marcar quando ≥” você define a pontuação mínima para gerar uma tag no webhook (deixe vazio para não marcar).' }),
+  P.variaveis.map(v => {
+  const nome = text(v, 'nome', { placeholder: 'Nome' });
+  nome.style.width = '170px';
+  const key = el('input', { class: 'input mono', value: v.chave, style: 'width:140px', 'aria-label': 'Chave da variável' });
+  key.addEventListener('change', () => {
+  const next = slugKey(key.value);
+  if (!next || P.variaveis.some(x => x !== v && x.chave === next)) { key.value = v.chave; return; }
+  renameVar(v, next); key.value = next; touch(); draw();
+  });
+  const corte = el('input', { class: 'input', type: 'number', value: v.corte ?? '', placeholder: 'sem tag', style: 'width:100px', 'aria-label': 'Marcar quando maior ou igual a' });
+  corte.addEventListener('input', () => { v.corte = corte.value === '' ? null : Number(corte.value); touch(); });
+  return el('div', { style: rowStyle }, nome, key, el('span', { class: 'muted', text: 'marcar quando ≥' }), corte,
+  el('button', { class: 'icon-btn', type: 'button', title: 'Remover variável (e as regras que a usam)', onclick: () => { dropVar(v); touch(); draw(); } }, '✕'));
+  }),
+  el('button', { class: 'btn sm', type: 'button', onclick: () => { P.variaveis.push({ id: rid('v'), chave: uniqueVar('variavel'), nome: 'Nova variável', corte: null }); touch(); draw(); } }, '+ Adicionar variável'));
+
+  const ruleRow = (r, ri) => {
+  const q = sch().perguntas.find(x => x.id === r.pergunta) || answerable()[0];
+  const isMx = q?.tipo === 'matriz';
+  const ops = isMx ? OPS.choice : q ? opsFor(q) : OPS.text;
+  if (!ops.some(([v]) => v === r.op)) r.op = ops[0][0];
+  if (isMx && !r.linha) r.linha = 'A';
+  if (!isMx) r.linha = '';
+  const values = q ? valuesFor(q) : null;
+  let valueEl;
+  if (values) valueEl = pick(r.valor, [['', 'Escolha…'], ...values.map(v => [v, q.tipo === 'escala' ? faceFor(q, Number(v)) : v])], val => { r.valor = val; });
+  else {
+  valueEl = el('input', { class: 'input', value: r.valor, placeholder: 'Valor', style: 'width:140px' });
+  valueEl.addEventListener('input', () => { r.valor = valueEl.value; touch(); });
+  }
+  const pts = el('input', { class: 'input', type: 'number', value: r.pontos, style: 'width:76px', 'aria-label': 'Pontos' });
+  pts.addEventListener('input', () => { r.pontos = Number(pts.value) || 0; touch(); });
+  return el('div', { style: rowStyle },
+  el('span', { class: 'cond-and', text: 'Se' }),
+  pick(q?.id || '', answerable().map(o => [o.id, qLabel(o)]), val => { r.pergunta = val; r.valor = ''; r.linha = ''; r.op = 'igual'; draw(); }),
+  isMx && pick(r.linha, (q.linhas || []).map((t, i) => [LET[i], `${LET[i]}. ${String(t).slice(0, 28)}`]), val => { r.linha = val; }),
+  pick(r.op, ops, val => { r.op = val; }),
+  valueEl,
+  el('span', { class: 'muted', text: '→ soma' }), pts,
+  pick(r.variavel, varOptions(), val => { r.variavel = val; }),
+  el('button', { class: 'icon-btn', type: 'button', title: 'Remover regra', onclick: () => { P.regras.splice(ri, 1); touch(); draw(); } }, '✕'));
+  };
+
+  const rulesSection = () => el('div', { class: 'section' }, el('h3', { text: 'Regras de pontos' }),
+  el('p', { class: 'hint', style: 'margin-bottom:12px', text: 'Quando a resposta combina, os pontos são somados à variável. Uma mesma resposta pode pontuar em mais de uma variável (crie uma regra para cada). Em matrizes, escolha também a linha.' }),
+  answerable().length === 0 && el('p', { class: 'notice', text: 'Crie perguntas antes de montar regras.' }),
+  P.regras.map(ruleRow),
+  el('button', {
+  class: 'btn sm', type: 'button', disabled: !answerable().length || !P.variaveis.length,
+  onclick: () => { P.regras.push({ id: rid('p'), variavel: P.variaveis[0].chave, pergunta: answerable()[0].id, linha: '', op: 'igual', valor: '', pontos: 1 }); touch(); draw(); }
+  }, '+ Adicionar regra'));
+
+  const resCard = (res, ri) => {
+  const move = d => { const j = ri + d; if (j < 0 || j >= P.resultados.length) return; [P.resultados[ri], P.resultados[j]] = [P.resultados[j], P.resultados[ri]]; touch(); draw(); };
+  const refOptions = () => [...P.variaveis.map(v => [`var:${v.chave}`, `a variável ${v.nome || v.chave}`]), ['num', 'um número']];
+  const cond = (c, ci) => {
+  const isNum = c.com.startsWith('num:');
+  const n = el('input', { class: 'input', type: 'number', value: Number(c.com.slice(4)) || 0, style: 'width:76px', 'aria-label': 'Número' });
+  n.addEventListener('input', () => { c.com = `num:${Number(n.value) || 0}`; touch(); });
+  return el('div', { style: rowStyle },
+  el('span', { class: 'cond-and', text: ci === 0 ? 'Se' : 'e' }),
+  pick(c.variavel, varOptions(), val => { c.variavel = val; }),
+  pick(c.op, CMP_OPS, val => { c.op = val; }),
+  pick(isNum ? 'num' : c.com, refOptions(), val => { c.com = val === 'num' ? 'num:0' : val; draw(); }),
+  isNum && n,
+  el('button', { class: 'icon-btn', type: 'button', title: 'Remover condição', onclick: () => { res.condicoes.splice(ci, 1); touch(); draw(); } }, '✕'));
+  };
+  return el('div', { class: 'rule' },
+  el('div', { class: 'row', style: 'margin-bottom:10px' }, el('b', { text: `Resultado ${ri + 1}` }), el('div', { class: 'grow' }),
+  el('button', { class: 'btn sm', type: 'button', onclick: () => { S.resIdx = ri; sendPreview(); } }, 'Ver na pré-visualização'),
+  el('button', { class: 'icon-btn', type: 'button', title: 'Subir', disabled: ri === 0, onclick: () => move(-1) }, '↑'),
+  el('button', { class: 'icon-btn', type: 'button', title: 'Descer', disabled: ri === P.resultados.length - 1, onclick: () => move(1) }, '↓'),
+  el('button', { class: 'icon-btn', type: 'button', title: 'Excluir resultado', onclick: () => { P.resultados.splice(ri, 1); touch(); draw(); } }, '🗑')),
+  el('div', { class: 'cols2' }, field('Nome (só para você)', text(res, 'nome', { placeholder: 'Ex.: Oferta' })), field('Chave (vai no webhook)', text(res, 'chave', { placeholder: 'oferta' }))),
+  el('div', { class: 'field' }, el('label', { text: 'Quando mostrar' }),
+  res.condicoes.length ? res.condicoes.map(cond) : el('p', { class: 'hint', text: 'Sem condições: aparece para quem não combinou com os resultados acima (padrão).' }),
+  el('button', {
+  class: 'btn sm', type: 'button', style: 'margin-top:4px', disabled: !P.variaveis.length,
+  onclick: () => { res.condicoes.push({ variavel: P.variaveis[0].chave, op: 'gte', com: P.variaveis[1] ? `var:${P.variaveis[1].chave}` : 'num:0' }); touch(); draw(); }
+  }, '+ Adicionar condição')),
+  field('Título', text(res, 'titulo', { multiline: true, rows: 2 }), TOKENS_HINT),
+  field('Texto', text(res, 'texto', { multiline: true, rows: 7 }), 'Cada linha vira um parágrafo. Aceita {primeiro_nome}, {area} e outras chaves; {chave|min} deixa a primeira letra minúscula.'),
+  field('Produto (linha em destaque, opcional)', text(res, 'produto', { placeholder: 'Ex.: Lit Start, Primeira Venda em 7 Dias' })),
+  el('div', { class: 'cols2' },
+  field('Botão: texto', text(res, 'botao_texto', { placeholder: 'Ex.: Quero transformar o que eu faço em oferta' })),
+  field('Botão: link', text(res, 'botao_url', { placeholder: 'https://…', type: 'url' }), 'O botão só aparece quando há link.')));
+  };
+
+  const resultsSection = () => el('div', { class: 'section' }, el('h3', { text: 'Resultados (conteúdo da tela final por pontuação)' }),
+  el('p', { class: 'hint', style: 'margin-bottom:12px', text: 'Depois de enviar, a pessoa vê a abertura da tela final (em “Tela final e redirecionamento”) e, logo abaixo, o primeiro resultado desta lista, de cima para baixo, cujas condições combinem. Deixe o último sem condições: ele vale como padrão e também como desempate.' }),
+  P.resultados.map(resCard),
+  el('button', { class: 'btn sm', type: 'button', onclick: () => { P.resultados.push({ id: rid('r'), nome: '', chave: '', condicoes: [], titulo: '', texto: '', produto: '', botao_texto: '', botao_url: '' }); touch(); draw(); } }, '+ Adicionar resultado'));
+
+  const draw = () => fill(holder,
+  el('h2', { text: 'Pontuação e resultados', style: 'margin-bottom:6px' }),
+  el('p', { class: 'muted', style: 'margin:0 0 16px', text: 'Some pontos em variáveis conforme as respostas e mostre uma tela de resultado diferente para cada perfil. Os pontos, as tags e a chave do resultado também vão no webhook de conclusão.' }),
+  toggle(P, 'ativo', 'Ativar pontuação e resultado por pontuação', { rerender: true }),
+  P.ativo && el('div', {}, variablesSection(), rulesSection(), resultsSection()));
+  draw();
+  return holder;
+  }
+
   function finalPanel() {
     const f = sch().final;
     return el('div', {},
@@ -341,13 +496,13 @@ export async function renderEditor(id, { mount, setCleanup }) {
   };
   const opsFor = q => (['unica', 'dropdown', 'sim_nao'].includes(q.tipo) ? OPS.choice : q.tipo === 'multipla' ? OPS.multi : ['escala', 'numero'].includes(q.tipo) ? OPS.number : q.tipo === 'cidade_uf' ? OPS.state : OPS.text);
   const valuesFor = q => (q.tipo === 'unica' ? [...q.opcoes.filter(Boolean), ...(q.outra ? ['Outra'] : [])] : q.tipo === 'multipla' ? [...q.opcoes.filter(Boolean), ...(q.outra ? ['Outra'] : [])]
-    : q.tipo === 'dropdown' ? q.opcoes.filter(Boolean) : q.tipo === 'sim_nao' ? ['Sim', 'Não'] : q.tipo === 'cidade_uf' ? UFS
+    : q.tipo === 'dropdown' ? [...q.opcoes.filter(Boolean), ...(q.outra ? ['Outra'] : [])] : q.tipo === 'matriz' ? q.opcoes.filter(Boolean) : q.tipo === 'sim_nao' ? ['Sim', 'Não'] : q.tipo === 'cidade_uf' ? UFS
     : q.tipo === 'escala' ? Array.from({ length: q.max - q.min + 1 }, (_, k) => String(q.min + k)) : null);
 
   function redirectSection() {
     const r = sch().final.redirecionamento;
     const holder = el('div', { class: 'section' });
-    const answerable = () => sch().perguntas.map((q, i) => ({ q, i })).filter(({ q }) => q.tipo !== 'aviso');
+    const answerable = () => sch().perguntas.map((q, i) => ({ q, i })).filter(({ q }) => q.tipo !== 'aviso' && q.tipo !== 'matriz');
 
     const conditionRow = (rule, c, ci) => {
       const q = sch().perguntas.find(x => x.id === c.pergunta);
@@ -459,6 +614,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
             q.exclusivas = q.exclusivas.map(x => (x === old ? input.value : x));
             if (q.ramos[old] !== undefined) { q.ramos[input.value] = q.ramos[old]; delete q.ramos[old]; } // keep the rule when an option is renamed
             for (const rule of sch().final.redirecionamento.regras) for (const c of rule.condicoes) if (c.pergunta === q.id && c.valor === old) c.valor = input.value;
+            for (const pr of sch().pontuacao.regras) if (pr.pergunta === q.id && pr.valor === old) pr.valor = input.value;
             touch(); onChange?.();
           });
           input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); q.opcoes.splice(i + 1, 0, ''); draw(i + 1); touch(); } });
@@ -515,6 +671,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
     typeSelect.addEventListener('change', () => {
       q.tipo = typeSelect.value;
       if (CHOICE.includes(q.tipo) && !q.opcoes.length) q.opcoes = ['Opção 1', 'Opção 2'];
+      if (q.tipo === 'matriz') { if (!q.opcoes.length) q.opcoes = ['Discordo', 'Neutro', 'Concordo']; if (!(q.linhas || []).length) q.linhas = ['Afirmação 1']; }
       if (q.tipo === 'aviso') q.obrigatoria = false;
       if (q.tipo !== 'escala') q.estilo = 'numeros';
       renderList(); renderPanel(); touch();
@@ -542,6 +699,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
           const rulesBefore = rr.regras.length;
           rr.regras = rr.regras.filter(rule => !rule.condicoes.some(c => c.pergunta === q.id));
           const droppedRules = rulesBefore - rr.regras.length;
+          sch().pontuacao.regras = sch().pontuacao.regras.filter(pr => pr.pergunta !== q.id);
           qs.splice(i, 1); select_(qs[Math.min(i, qs.length - 1)]?.id || 'welcome'); touch();
           const notes = [refs && `${refs} regra(s) de navegação voltaram ao padrão`, hadHook && 'o webhook por pergunta foi desligado', droppedRules && `${droppedRules} regra(s) de redirecionamento foram removidas`].filter(Boolean);
           if (notes.length) toast(`Esta pergunta era usada em outros lugares: ${notes.join('; ')}`);
@@ -557,8 +715,12 @@ export async function renderEditor(id, { mount, setCleanup }) {
     if (TEXTLIKE.includes(q.tipo) || q.tipo === 'dropdown') parts.push(field(q.tipo === 'dropdown' ? 'Texto do campo de busca' : 'Texto de exemplo (placeholder)', text(q, 'placeholder')));
     if (CHOICE.includes(q.tipo)) {
       parts.push(field('Opções', optionsEditor(q, drawRoute)),
-        q.tipo !== 'dropdown' && toggle(q, 'outra', 'Incluir opção “Outra” com campo de texto', { onchange: drawRoute }),
+        toggle(q, 'outra', 'Incluir opção “Outra” com campo de texto', { onchange: drawRoute }),
         q.tipo !== 'dropdown' && toggle(q, 'compacta', 'Mostrar opções lado a lado'));
+    }
+    if (q.tipo === 'matriz') {
+    parts.push(field('Linhas (afirmações)', linesEditor(q), 'Cada linha recebe uma letra (A, B, C…), usada nas regras de pontuação. Se apagar uma linha do meio, as letras seguintes mudam.'),
+    field('Colunas (alternativas de resposta)', optionsEditor(q, drawRoute), 'Todas as linhas usam as mesmas colunas, na ordem em que aparecem aqui.'));
     }
     if (q.tipo === 'escala') {
       const lockNote = ' Não pode mudar depois que o formulário foi aberto.';

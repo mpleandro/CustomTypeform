@@ -519,7 +519,7 @@ function validate(q) {
     case 'dropdown': return v === 'Outra' && !(answers[`${q.id}_outra`] || '').trim() ? 'Conte qual é a sua resposta.' : '';
     case 'matriz': return Object.keys(v).length < (q.linhas || []).length ? 'Responda todas as afirmações.' : '';
     case 'email': return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()) ? '' : 'Esse e-mail não parece válido.';
-    case 'telefone': { const n = v.replace(/\D/g, '').length; return n >= 10 && n <= 11 ? '' : 'Informe o número com DDD.'; }
+    case 'telefone': return CtfRoute.phoneError(v.replace(/\D/g, ''));
     case 'numero': return Number.isFinite(Number(v.replace(',', '.'))) ? '' : 'Digite apenas números.';
     case 'url': return /^(https?:\/\/)?[^\s/]+\.[^\s/]{2,}/i.test(v.trim()) ? '' : 'Esse link não parece válido.';
     case 'data': return /^\d{4}-\d{2}-\d{2}$/.test(v) ? '' : 'Informe uma data válida.';

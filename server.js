@@ -130,7 +130,8 @@ function fireQuestionHook(form, q, response, value, outra) {
     }
   });
 }
-function fireCompleteHook(form, response, pts) {
+const baseUrl = req => process.env.PUBLIC_URL || `${isHttps(req) ? 'https' : 'http'}://${req.headers.host}`;
+function fireCompleteHook(form, response, pts, base) {
   const w = form.schema.ajustes.webhook;
   if (!w.ao_concluir || !w.url) return;
   hooks.dispatch({
@@ -139,6 +140,8 @@ function fireCompleteHook(form, response, pts) {
       evento: 'form.completed', enviado_em: new Date().toISOString(), formulario: formSummary(form), resposta_id: response.id,
       iniciada_em: response.started_at, concluida_em: response.completed_at,
       ...(pts ? { pontuacao: pts.pontos, tags: pts.tags, resultado: pts.resultado?.chave || '' } : {}),
+      // Result button: tracked link (records the click and redirects), the real destination and where to ask whether it was clicked.
+      ...(response.answers._pontuacao?.destino ? { link_resultado: `${base}/go/${response.id}`, link_destino: response.answers._pontuacao.destino, verificar_clique: `${base}/api/clique/${response.id}` } : {}),
       respostas: stats.keyed(form.schema, response.answers), meta: response.meta
     }
   });
@@ -262,7 +265,7 @@ const publicRoutes = {
     r.answers = { ...kept, ...answers };
     // Score: points per variable, lead tags and the result screen are decided here (rules never reach the browser).
     const pts = score.compute(f.schema, answers);
-    if (pts) r.answers._pontuacao = { pontos: pts.pontos, tags: pts.tags, resultado: pts.resultado?.chave || '' };
+    if (pts) r.answers._pontuacao = { pontos: pts.pontos, tags: pts.tags, resultado: pts.resultado?.chave || '', ...(pts.resultado?.botao_url ? { destino: fillUrl(pts.resultado.botao_url, f.schema, answers, r.id) } : {}) };
     r.completed_at = new Date().toISOString();
     r.started_at = store.getResponse(r.id, f.id).started_at;
     store.saveResponse(r);
@@ -270,13 +273,13 @@ const publicRoutes = {
     for (const q of qs) {
       if (answers[q.id] !== undefined && !sameJson(before[q.id], answers[q.id])) fireQuestionHook(f, q, r, answers[q.id], answers[`${q.id}_outra`]);
     }
-    fireCompleteHook(f, r, pts);
+    fireCompleteHook(f, r, pts, baseUrl(req));
     // Conditional redirect: chosen here so the rules and URLs never reach the browser unless they match.
     const target = routing.redirectFor(f.schema.final.redirecionamento, answers);
     const chosen = pts?.resultado;
     json(res, 200, {
     ok: true, redirect: target ? fillUrl(target, f.schema, answers, r.id) : '',
-    resultado: chosen ? { titulo: chosen.titulo, texto: chosen.texto, produto: chosen.produto, botao_texto: chosen.botao_texto, botao_url: chosen.botao_url ? fillUrl(chosen.botao_url, f.schema, answers, r.id) : '' } : null
+    resultado: chosen ? { titulo: chosen.titulo, texto: chosen.texto, produto: chosen.produto, botao_texto: chosen.botao_texto, botao_url: chosen.botao_url ? `/go/${r.id}` : '' } : null
     });
   }
 };
@@ -512,6 +515,21 @@ http.createServer(async (req, res) => {
       if (!action && req.method === 'GET') return await publicRoutes.get(req, res, { slug });
       if (action && req.method === 'POST') return await publicRoutes[action](req, res, { slug });
       return fail(res, 405, 'Método não permitido.');
+    }
+    // Result-button click tracking: /go/<id> records the first click and redirects; /api/clique/<id> tells whether it happened.
+    const go = /^\/go\/([0-9a-f-]{36})$/.exec(pathname), clique = /^\/api\/clique\/([0-9a-f-]{36})$/.exec(pathname);
+    if ((go || clique) && (req.method === 'GET' || req.method === 'HEAD')) {
+      const r = store.getResponseById((go || clique)[1]);
+      const pt = r?.answers?._pontuacao;
+      if (clique) return send(res, r ? 200 : 404, JSON.stringify(r ? { ok: true, concluida: !!r.completed_at, clicou: !!pt?.clicou_em, clicou_em: pt?.clicou_em || null } : { ok: false }), { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      if (!pt?.destino) return send(res, 404, 'Link não encontrado', { 'Content-Type': 'text/plain; charset=utf-8' });
+      // Link-preview robots (WhatsApp, Facebook...) fetch the URL without a person clicking, so they do not count.
+      if (req.method === 'GET' && !pt.clicou_em && !/bot|crawl|spider|preview|whatsapp|facebookexternalhit|telegram|slack|curl|wget/i.test(req.headers['user-agent'] || '')) {
+        r.answers._pontuacao = { ...pt, clicou_em: new Date().toISOString() };
+        store.saveResponse(r);
+      }
+      res.writeHead(302, { Location: pt.destino, 'Cache-Control': 'no-store' });
+      return res.end();
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'Método não permitido.');
 

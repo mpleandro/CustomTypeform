@@ -41,6 +41,7 @@ export async function copy(text) {
 /* Icons: a small Lucide subset (ISC license), inlined so the panel has no dependencies. */
 const ICONS = {
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5 5.5 5.5 0 0 1-5.5 5.5H11"/>',
   copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
   external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
@@ -162,6 +163,9 @@ export function fmtDur(s) {
   return m < 60 ? `${m}min ${pad(s % 60)}s` : `${Math.floor(m / 60)}h ${pad(m % 60)}min`;
 }
 export const formUrl = slug => `${location.origin}/f/${slug}`;
+// Money answers are stored as plain numbers; this shows them with the question's currency symbol.
+export const money = (sym, v) => `${sym || 'R$'} ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const showAnswer = (q, v) => (q?.formato === 'moeda' && v !== undefined && v !== null && v !== '' && Number.isFinite(Number(v)) ? money(q.moeda, v) : display(v));
 export const display = v => (v === undefined || v === null || v === '' ? '' : Array.isArray(v) ? v.join(', ') : typeof v === 'object' ? (v.cidade !== undefined || v.uf !== undefined ? `${v.cidade}/${v.uf}` : Object.entries(v).map(([k, x]) => `${k}: ${x}`).join(' | ')) : String(v));
 export const plain = text => String(text || '').replace(/\*/g, '').trim();
 

@@ -34,6 +34,12 @@ Painel: http://127.0.0.1:3000/admin/ · Formulários publicados: http://127.0.0.
 - **14 tipos**: texto curto/longo, e-mail, telefone, número, link, data, cidade/UF, escolha única, **lista suspensa** (pesquisável,
   para muitas opções), múltipla, sim/não, **avaliação** e mensagem. A avaliação tem três estilos: **números** (ex.: NPS de 0 a 10),
   **estrelas** (3 a 10) e **emojis** (3 a 5 carinhas, para satisfação).
+- **Número ou monetário**: a pergunta de número pode virar **monetário**, com símbolo escolhido (R$, US$, €, £, ¥) ou digitado.
+  A pessoa digita só os dígitos (1.250,00); o webhook e o CSV recebem o número puro (1250).
+- **Salvar sem publicar**: num formulário que já está no ar, “Salvar” (ou Cmd/Ctrl+S) guarda as alterações sem mexer na versão publicada;
+  “Publicar alterações” coloca no ar. Dá para descartar o que não foi publicado em “Mais ações”. A lista marca “alterações não publicadas”.
+- **Nome dos campos nas integrações**: na aba Integrações, cada pergunta mostra o nome do campo enviado ao webhook, editável ali mesmo, junto dos valores das respostas.
+- **Voltar**: ao lado do botão de cada pergunta há um link “← Voltar” para a anterior (além das setas no canto).
 - **O tipo da pergunta trava depois que o formulário é aberto** (publicado pela primeira vez): as respostas já recebidas deixariam de fazer sentido.
   Vale também para o estilo e a escala da avaliação. Para outro tipo, crie uma pergunta nova (a antiga pode ser excluída; as respostas viram “passadas”).
 - **Grupos de perguntas** (*Configurações*, no topo da página inicial): conjuntos prontos de perguntas para reutilizar, como

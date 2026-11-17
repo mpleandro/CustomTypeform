@@ -1,4 +1,4 @@
-import { el, fill, api, toast, copy, fmtDate, fmtDay, fmtPct, fmtNum, fmtDur, formUrl, display, plain, icon, statusPill, TIPOS } from './ui.js';
+import { el, fill, api, toast, copy, fmtDate, fmtDay, fmtPct, fmtNum, fmtDur, formUrl, display, showAnswer, money, plain, icon, statusPill, TIPOS } from './ui.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs = {}, ...kids) => {
@@ -101,7 +101,7 @@ export async function renderResults(id, { mount, shell, setCleanup }) {
       if (q.linhas) body.append(el('div', { class: 'dist' }, q.linhas.map(l => el('div', { class: 'mx-row' }, el('small', { text: l.label }),
         l.dist.map(d => el('div', { class: 'd' }, el('span', { text: d.label }), el('b', {}, q.answered ? fmtPct(d.n / q.answered) : '—', el('small', { text: fmtNum(d.n) })),
           el('div', { class: 'bar' }, el('i', { style: `width:${(d.n / Math.max(1, ...l.dist.map(x => x.n))) * 100}%` }))))))));
-      if (q.avg !== undefined && q.avg !== null) body.append(el('div', { class: 'avg' }, el('b', { text: q.avg.toLocaleString('pt-BR', { maximumFractionDigits: q.tipo === 'numero' ? 2 : 1 }) }), el('span', { text: q.tipo === 'numero' ? `média · mín ${q.min} · máx ${q.max}` : 'média' })));
+      if (q.avg !== undefined && q.avg !== null) body.append(el('div', { class: 'avg' }, el('b', { text: q.formato === 'moeda' ? money(q.moeda, q.avg) : q.avg.toLocaleString('pt-BR', { maximumFractionDigits: q.tipo === 'numero' ? 2 : 1 }) }), el('span', { text: q.tipo === 'numero' ? `média · mín ${q.formato === 'moeda' ? money(q.moeda, q.min) : q.min} · máx ${q.formato === 'moeda' ? money(q.moeda, q.max) : q.max}` : 'média' })));
       if (q.latest) body.append(q.latest.length ? el('ul', { class: 'latest' }, q.latest.map(t => el('li', { text: t, title: t }))) : el('p', { class: 'hint', style: 'margin-top:12px', text: 'Sem respostas ainda.' }));
       return el('div', { class: 'card qcard' },
         el('h3', { text: `${q.n}. ${plain(q.rotulo) || 'Sem título'}` }),
@@ -147,7 +147,7 @@ export async function renderResults(id, { mount, shell, setCleanup }) {
     const rows = data.respostas.map(r => el('tr', { onclick: () => openDrawer(r) },
       el('td', { class: 'when', text: fmtDate(r.started_at) }),
       el('td', {}, r.completed_at ? el('span', { class: 'pill ok', text: 'Completa' }) : el('span', { class: 'pill warn', title: stoppedAt(r), text: 'Incompleta' })),
-      cols.map(c => el('td', { title: display(r.answers[c.id]), text: display(r.answers[c.id]) || '—' })),
+      cols.map(c => el('td', { title: showAnswer(c, r.answers[c.id]), text: showAnswer(c, r.answers[c.id]) || '—' })),
       el('td', { class: 'go' }, icon('right', 15))));
 
     fill(body, 
@@ -175,7 +175,7 @@ export async function renderResults(id, { mount, shell, setCleanup }) {
         el('span', { class: 'muted num', text: fmtDate(r.started_at) })),
       form.schema.perguntas.map((q, pos) => {
         if (q.tipo === 'aviso') return null;
-        const v = display(r.answers[q.id]);
+        const v = showAnswer(q, r.answers[q.id]);
         const other = r.answers[`${q.id}_outra`];
         const skipped = !route.has(q.id) && !v;
         return el('div', { class: `qa${skipped ? ' skip' : ''}` }, el('small', { text: `${pos + 1}. ${plain(q.rotulo) || q.chave}` }),

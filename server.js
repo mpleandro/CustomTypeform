@@ -349,7 +349,7 @@ async function saveGroup(req, res, id, creating) {
 }
 
 function formPayload(f) {
-  return { id: f.id, slug: f.slug, titulo: f.title, status: f.status, estado: f.status === 'draft' ? 'rascunho' : openState(f), aberto_em: f.opened_at, schema: f.schema, criado_em: f.created_at, atualizado_em: f.updated_at };
+  return { id: f.id, slug: f.slug, titulo: f.title, status: f.status, estado: f.status === 'draft' ? 'rascunho' : openState(f), aberto_em: f.opened_at, schema: f.schema, rascunho: f.draft || null, criado_em: f.created_at, atualizado_em: f.updated_at };
 }
 const daysOf = q => { const n = Number(q.get('days')); return Number.isFinite(n) && n >= 0 && n <= 365 ? Math.floor(n) : 30; };
 
@@ -417,11 +417,22 @@ const adminRoutes = [
       const locked = schemaLib.lockedChanges(f.schema, schema);
       if (locked.length) return fail(res, 422, 'O tipo das perguntas não pode mudar depois que o formulário foi aberto.', { problemas: locked });
     }
+    // Saving without publishing: a live form keeps serving its current version; the edits wait in forms.draft.
+    if (body.rascunho === true && f.status !== 'draft') {
+      store.saveDraft(id, { titulo: title, slug, schema });
+      return json(res, 200, { ok: true, form: formPayload(store.getForm(id)) });
+    }
     if (status === 'published') {
       const issues = schemaLib.problems(schema);
       if (issues.length) return fail(res, 422, 'Corrija os pontos abaixo para publicar.', { problemas: issues });
     }
     store.updateForm(id, { slug, title, status, schema });
+    json(res, 200, { ok: true, form: formPayload(store.getForm(id)) });
+  }],
+
+  ['DELETE', '/api/admin/forms/:id/rascunho', async (req, res, { id }) => {
+    if (!store.getForm(id)) return fail(res, 404, 'Formulário não encontrado.');
+    store.saveDraft(id, null);
     json(res, 200, { ok: true, form: formPayload(store.getForm(id)) });
   }],
 

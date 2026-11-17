@@ -155,7 +155,7 @@ async function listView() {
     ]); } }, icon('more', 18));
     return el('div', { class: 'frow', role: 'link', tabindex: '0', onclick: open, onkeydown: e => { if (e.key === 'Enter' && e.target === e.currentTarget) open(); } },
       el('div', { class: 'who' }, cover(f.tema),
-        el('div', { class: 'name' }, el('b', { text: f.title }), el('span', { text: `/f/${f.slug}` }))),
+        el('div', { class: 'name' }, el('b', { text: f.title }), el('span', {}, `/f/${f.slug}`, f.pendente && f.status !== 'draft' && el('em', { class: 'pending-note', text: ' · alterações não publicadas' })))),
       el('div', { class: 'st' }, statusPill(f.estado)),
       el('div', { class: 'n' }, fmtNum(f.completed), el('small', { text: `de ${fmtNum(f.started)}` })),
       el('div', { class: 'rate' }, f.started ? fmtPct(f.rate) : el('span', { class: 'muted', text: '—' }), el('span', { class: 'track' }, el('i', { style: `width:${(f.rate || 0) * 100}%` }))),

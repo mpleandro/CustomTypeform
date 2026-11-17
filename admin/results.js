@@ -183,6 +183,7 @@ export async function renderResults(id, { mount, shell, setCleanup }) {
       }),
       past.length > 0 && el('div', { class: 'qa' }, el('small', { text: 'Perguntas removidas' }),
         past.map(q => el('div', { style: 'margin:8px 0 0' }, el('small', { text: plain(q.rotulo) || q.chave }), el('div', { text: display(r.answers[q.id]) })))),
+      r.answers._consentimento !== undefined && el('div', { class: 'qa' }, el('small', { text: 'Consentimento (LGPD)' }), el('div', { text: r.answers._consentimento ? 'Sim, autorizou' : 'Não autorizou' })),
       r.answers._pontuacao && el('div', { class: 'qa' }, el('small', { text: 'Pontuação' }),
         el('div', { text: `${Object.entries(r.answers._pontuacao.pontos || {}).map(([k, n]) => `${k}: ${n}`).join(' · ')}${(r.answers._pontuacao.tags || []).length ? ` · tag: ${r.answers._pontuacao.tags.join(', ')}` : ''} → resultado: ${r.answers._pontuacao.resultado || '—'}` })),
       Object.keys(r.meta || {}).length > 0 && el('div', { class: 'qa' }, el('small', { text: 'Origem (UTM)' }), el('div', { class: 'mono', style: 'font-size:12px' }, Object.entries(r.meta).map(([k, v]) => el('div', { text: `${k}: ${v}` })))),

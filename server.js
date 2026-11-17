@@ -148,11 +148,24 @@ const SAMPLE_META = { utm_source: 'instagram', utm_medium: 'bio', utm_campaign: 
 
 // One webhook per form (Ajustes): it fires when the form is completed and/or when one chosen question is answered.
 // Payload builders: shared by the real webhooks and by the "send a sample" test, so both have the same shape.
+// "respostas" carries the custom value of each answer (Integrações › Valores) plus the hidden custom fields;
+// a question always wins over a custom field with the same name.
+function webhookFields(form, answers) {
+  const values = stats.keyedValues(form.schema, answers);
+  const shown = Object.fromEntries(Object.entries(values).map(([k, v]) => [k, Array.isArray(v) ? v.join(', ') : v && typeof v === 'object' ? Object.values(v).join(', ') : v ?? '']));
+  const extras = {};
+  for (const x of form.schema.ajustes.webhook.extras || []) {
+    if (!x.chave || x.chave in values) continue;
+    extras[x.chave] = x.valor.replace(/\{([a-z0-9_]+)\}/gi, (_, k) => String(shown[k] ?? ''));
+  }
+  return { ...extras, ...values };
+}
+const consentField = (form, response) => (form.schema.consentimento.ativo ? { consentimento: response.answers._consentimento === true } : {});
 const questionPayload = (form, q, response, value, outra) => ({
   evento: 'question.answered', enviado_em: new Date().toISOString(), formulario: formSummary(form), resposta_id: response.id,
   pergunta: { id: q.id, chave: q.chave, tipo: q.tipo, rotulo: q.rotulo },
-  resposta: value, ...(outra ? { resposta_outra: outra } : {}),
-  respostas: stats.keyed(form.schema, response.answers), meta: response.meta, concluida: !!response.completed_at
+  resposta: stats.mapValue(q, value), ...(outra ? { resposta_outra: outra } : {}),
+  respostas: webhookFields(form, response.answers), meta: response.meta, concluida: !!response.completed_at
 });
 const completePayload = (form, response, pts, base) => ({
   evento: 'form.completed', enviado_em: new Date().toISOString(), formulario: formSummary(form), resposta_id: response.id,
@@ -160,12 +173,13 @@ const completePayload = (form, response, pts, base) => ({
   ...(pts ? { pontuacao: pts.pontos, tags: pts.tags, resultado: pts.resultado?.chave || '' } : {}),
   // Result button: tracked link (records the click and redirects), the real destination and where to ask whether it was clicked.
   ...(response.answers._pontuacao?.destino ? { link_resultado: `${base}/go/${response.id}`, link_destino: response.answers._pontuacao.destino, verificar_clique: `${base}/api/clique/${response.id}` } : {}),
-  respostas: stats.keyed(form.schema, response.answers), meta: response.meta
+  ...consentField(form, response),
+  respostas: webhookFields(form, response.answers), meta: response.meta
 });
 
 function fireQuestionHook(form, q, response, value, outra) {
   const w = form.schema.ajustes.webhook;
-  if (!w.ao_responder || !w.url || w.pergunta !== q.id) return;
+  if (!w.ativo || !w.ao_responder || !w.url || w.pergunta !== q.id) return;
   hooks.dispatch({
     form_id: form.id, response_id: response.id, question_id: q.id, event: 'question.answered',
     url: w.url, secret: w.segredo, payload: questionPayload(form, q, response, value, outra)
@@ -174,7 +188,7 @@ function fireQuestionHook(form, q, response, value, outra) {
 const baseUrl = req => process.env.PUBLIC_URL || `${isHttps(req) ? 'https' : 'http'}://${req.headers.host}`;
 function fireCompleteHook(form, response, pts, base) {
   const w = form.schema.ajustes.webhook;
-  if (!w.ao_concluir || !w.url) return;
+  if (!w.ativo || !w.ao_concluir || !w.url) return;
   hooks.dispatch({
     form_id: form.id, response_id: response.id, question_id: null, event: 'form.completed', url: w.url, secret: w.segredo,
     payload: completePayload(form, response, pts, base)
@@ -282,7 +296,6 @@ const publicRoutes = {
       else if (q.tipo === 'matriz' && q.obrigatoria && !matrixComplete(q, clean[q.id])) errors[q.id] = 'obrigatória';
       else { answers[q.id] = clean[q.id]; if (clean[`${q.id}_outra`]) answers[`${q.id}_outra`] = clean[`${q.id}_outra`]; }
     }
-    if (f.schema.consentimento.ativo && body.consentimento !== true) errors.consentimento = 'obrigatório';
     if (Object.keys(errors).length) return fail(res, 422, 'Algumas respostas são inválidas.', { campos: errors });
 
     let r = typeof body.rid === 'string' ? store.getResponse(body.rid, f.id) : null;
@@ -297,6 +310,8 @@ const publicRoutes = {
     const current = new Set(qs.map(q => q.id));
     const kept = Object.fromEntries(Object.entries(before).filter(([k]) => !current.has(k.replace(/_outra$/, ''))));
     r.answers = { ...kept, ...answers };
+    // LGPD consent is optional: what the person chose goes with the response (and to the webhook).
+    if (f.schema.consentimento.ativo) r.answers._consentimento = body.consentimento === true;
     // Score: points per variable, lead tags and the result screen are decided here (rules never reach the browser).
     const pts = score.compute(f.schema, answers);
     if (pts) r.answers._pontuacao = { pontos: pts.pontos, tags: pts.tags, resultado: pts.resultado?.chave || '', ...(pts.resultado?.botao_url ? { destino: fillUrl(pts.resultado.botao_url, f.schema, answers, r.id) } : {}) };
@@ -489,7 +504,7 @@ const adminRoutes = [
       sample = questionPayload(form, q, { id: 'teste', answers, meta: SAMPLE_META, completed_at: null }, answers[q.id]);
     } else {
       const pts = score.compute(schema, all);
-      const answers = { ...all };
+      const answers = { ...all, _consentimento: true };
       if (pts?.resultado?.botao_url) answers._pontuacao = { destino: fillUrl(pts.resultado.botao_url, schema, all, 'teste') };
       sample = completePayload(form, { id: 'teste', answers, meta: SAMPLE_META, started_at: started, completed_at: new Date().toISOString() }, pts, baseUrl(req));
     }

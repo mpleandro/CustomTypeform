@@ -26,7 +26,7 @@ Painel: http://127.0.0.1:3000/admin/ · Formulários publicados: http://127.0.0.
 - **Editor** com pré-visualização ao vivo (desktop/celular): adicionar, reordenar (arrastar), duplicar e excluir perguntas.
   **Nada vai ao ar sem salvar**: editar só muda o editor e a pré-visualização; o botão *Salvar* (ou Cmd/Ctrl+S) é que grava.
   Em formulário publicado, salvar publica as alterações na hora.
-- **Lógica de navegação**: cada pergunta segue por padrão para a seguinte. Em *Navegação* você define outro destino
+- **Lógica de navegação**: cada pergunta segue por padrão para a seguinte. Em *Lógica: para onde ir depois* (dentro de cada pergunta) você define outro destino
   (uma pergunta posterior ou *Finalizar*) e, nas perguntas de escolha única, sim/não e escala, um destino por resposta
   (ex.: responde A → vai para a pergunta 3; responde B → segue para a 2). Só é possível saltar para frente, então não há laços.
   Para quem responde, a contagem continua sequencial (a pergunta 3 aparece como “02”); no sistema a resposta fica
@@ -38,14 +38,14 @@ Painel: http://127.0.0.1:3000/admin/ · Formulários publicados: http://127.0.0.
   Vale também para o estilo e a escala da avaliação. Para outro tipo, crie uma pergunta nova (a antiga pode ser excluída; as respostas viram “passadas”).
 - **Aparência**: temas prontos, cores, fonte, cantos, logo, imagem de fundo.
 - **Criação de formulários**: informe o nome e escolha um template visual — BALF 360, Vértuz, Jornada Plenitude, Mentoria Mil Milionários ou Ignis. O tema pode ser ajustado depois em *Aparência*.
-- **Webhook** único por formulário, configurado em *Ajustes*, com duas caixas: **ao concluir o formulário** e/ou **ao responder uma
+- **Webhook** único por formulário, configurado em *Ajustes › Integrações*, com duas caixas: **ao concluir o formulário** e/ou **ao responder uma
   pergunta específica** (você escolhe qual). Não dispara a cada pergunta. Assinatura HMAC (`X-Webhook-Signature`), 3 tentativas,
   botões de teste e histórico.
-- **Redirecionamento condicional** (*Tela final e redirecionamento*): regras do tipo “pergunta 1 é A **e** pergunta 2 é C **e** pergunta 3 é D
+- **Redirecionamento condicional** (*Tela de obrigado › Levar para outra página*): regras do tipo “pergunta 1 é A **e** pergunta 2 é C **e** pergunta 3 é D
   → URL”. A primeira regra que combinar vence; sem regra, vale a URL padrão (opcional); desligado, a pessoa vê só a **página de obrigado**
   (título, texto e botão editáveis). As URLs aceitam `{chave}` para levar respostas e `{resposta_id}`. Operadores por tipo:
   é / não é, inclui, maior ou menor que (notas), contém.
-- **Agenda e encerramento**: abre e encerra em data e hora (fuso do navegador), ou encerre/reabra na hora. Telas próprias de “em breve” e
+- **Agenda** (no fim da lista de perguntas): abre e encerra em data e hora (fuso do navegador), ou encerre/reabra na hora. Telas próprias de “em breve” e
   “encerrado” (editáveis). Quem já estava preenchendo quando o encerramento agendado chega tem 10 minutos para terminar.
 - **Prévia do link** (*Ajustes*): título, descrição e imagem que aparecem ao compartilhar no WhatsApp, Instagram e afins
   (definir `PUBLIC_URL` se o site fica atrás de um proxy que muda o endereço).
@@ -114,7 +114,7 @@ domínio próprio por formulário, múltiplos usuários.
 
 - **Matriz (grade):** várias afirmações numa só tela, com as mesmas colunas de resposta. Cada linha recebe uma letra (A, B, C…) e a resposta é salva como `{ "A": "Concordo", … }`.
 - **Lista suspensa com “Outra”:** ative “Incluir opção Outra” na pergunta; a pessoa digita a resposta livre.
-- **Pontuação e resultados** (item “Pontuação e resultados” no editor): crie variáveis (ex.: oferta, tese, volume, vulcan), regras de pontos por resposta (inclusive por linha de uma matriz) e telas de resultado. O primeiro resultado cujas condições combinarem (de cima para baixo) aparece depois da abertura da tela final; o último, sem condições, vale como padrão. As regras ficam no servidor.
+- **Pontuação e resultados** (item “Pontuação”, no fim da lista do editor): crie variáveis (ex.: oferta, tese, volume, vulcan), regras de pontos por resposta (inclusive por linha de uma matriz) e telas de resultado. O primeiro resultado cujas condições combinarem (de cima para baixo) aparece depois da abertura da tela final; o último, sem condições, vale como padrão. As regras ficam no servidor.
 - **Textos:** `{chave}` cita uma resposta; `{chave|min}` deixa a primeira letra minúscula; cada linha de texto da tela final vira um parágrafo.
 - **Webhook de conclusão:** além das respostas, envia `pontuacao` (pontos por variável), `tags` (variáveis que atingiram o “marcar quando ≥”) e `resultado` (chave do resultado mostrado). As respostas de matriz chegam como objeto por letra.
 - **Dashboard e CSV:** a matriz aparece com a distribuição por linha; o CSV ganha colunas `pontos_<variável>`, `tags` e `resultado`.

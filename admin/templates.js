@@ -32,7 +32,8 @@ export const FORM_TEMPLATES = [
 ];
 
 export const THEME_PRESETS = [
-  ...FORM_TEMPLATES,
+  // The form templates keep their colors under `tema`; flatten them so every preset has the same shape.
+  ...FORM_TEMPLATES.map(t => ({ nome: t.nome, ...t.tema })),
   { nome: 'Escuro', fundo: '#0b0b0f', texto: '#f5f5f7', destaque: '#6366f1', destaque2: '#22d3ee' },
   { nome: 'Claro', fundo: '#ffffff', texto: '#18181b', destaque: '#4f46e5', destaque2: '#9333ea' },
   { nome: 'Oceano', fundo: '#06141f', texto: '#eaf6ff', destaque: '#22d3ee', destaque2: '#3b82f6' },

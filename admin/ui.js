@@ -171,6 +171,34 @@ export function fill(node, ...children) {
   return node;
 }
 
+/* QR code of a link (lib: admin/vendor/qrcode.js, MIT). Always dark on white with a quiet zone, so any camera reads it. */
+function qrModules(text) {
+  const q = window.qrcode(0, 'M');
+  q.addData(unescape(encodeURIComponent(text)), 'Byte'); // UTF-8 bytes
+  q.make();
+  const n = q.getModuleCount();
+  return { n, dark: (r, c) => q.isDark(r, c) };
+}
+export function qrSvg(text, margin = 4) {
+  const { n, dark } = qrModules(text), size = n + margin * 2;
+  let d = '';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (dark(r, c)) d += `M${c + margin} ${r + margin}h1v1h-1z`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges"><rect width="${size}" height="${size}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
+export function qrPngBlob(text, px = 1024, margin = 4) {
+  const { n, dark } = qrModules(text), cell = Math.floor(px / (n + margin * 2)), size = cell * (n + margin * 2);
+  const canvas = Object.assign(document.createElement('canvas'), { width: size, height: size });
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, size, size); ctx.fillStyle = '#000';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (dark(r, c)) ctx.fillRect((c + margin) * cell, (r + margin) * cell, cell, cell);
+  return new Promise(res => canvas.toBlob(res, 'image/png'));
+}
+export function downloadBlob(blob, name) {
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
 /* Light/dark mode: follows the system until the person picks one; the choice is kept in this browser. */
 const prefersDark = () => window.matchMedia('(prefers-color-scheme: dark)').matches;
 export const currentTheme = () => document.documentElement.dataset.theme || (prefersDark() ? 'dark' : 'light');

@@ -1,17 +1,9 @@
 import { el, fill, api, toast, copy, TIPOS, formUrl, plain, fmtDate } from './ui.js';
+import { THEME_PRESETS } from './templates.js';
 
 const CHOICE = ['unica', 'multipla', 'dropdown'];
 const UFS = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO','Exterior'];
 const TEXTLIKE = ['texto', 'longo', 'email', 'telefone', 'numero', 'url'];
-const PRESETS = [
-  { nome: 'BALF 360', fundo: '#070708', texto: '#f2f2f2', destaque: '#ff5c00', destaque2: '#cc8400' },
-  { nome: 'Escuro', fundo: '#0b0b0f', texto: '#f5f5f7', destaque: '#6366f1', destaque2: '#22d3ee' },
-  { nome: 'Claro', fundo: '#ffffff', texto: '#18181b', destaque: '#4f46e5', destaque2: '#9333ea' },
-  { nome: 'Ignis', fundo: '#080808', texto: '#f7f5ef', destaque: '#ff6b1a', destaque2: '#ffb347' },
-  { nome: 'Oceano', fundo: '#06141f', texto: '#eaf6ff', destaque: '#22d3ee', destaque2: '#3b82f6' },
-  { nome: 'Floresta', fundo: '#0e1a14', texto: '#eef7f0', destaque: '#34d399', destaque2: '#a3e635' },
-  { nome: 'Papel', fundo: '#faf6ee', texto: '#2a2118', destaque: '#c2410c', destaque2: '#b45309' }
-];
 const FONTS = ['Inter', 'Manrope', 'DM Sans', 'Poppins', 'Montserrat', 'Space Grotesk', 'Sora', 'Outfit', 'Playfair Display', 'Lora'];
 const TOKENS_HINT = 'Use *palavra* para destacar na cor do tema e {chave} para citar uma resposta anterior (ex.: {primeiro_nome}).';
 
@@ -761,7 +753,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
     return el('div', {},
       el('h2', { text: 'Aparência', style: 'margin-bottom:16px' }),
       el('div', { class: 'field' }, el('label', { text: 'Temas prontos' }),
-        el('div', { class: 'swatches' }, PRESETS.map(p => el('button', {
+        el('div', { class: 'swatches' }, THEME_PRESETS.map(p => el('button', {
           class: 'swatch', type: 'button',
           onclick: () => { Object.assign(t, { fundo: p.fundo, texto: p.texto, destaque: p.destaque, destaque2: p.destaque2 }); renderPanel(); touch(); }
         }, el('i', {}, el('b', { style: `background:${p.fundo}` }), el('b', { style: `background:${p.destaque}` }), el('b', { style: `background:${p.destaque2}` })), p.nome)))),

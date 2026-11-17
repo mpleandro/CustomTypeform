@@ -37,6 +37,7 @@ Painel: http://127.0.0.1:3000/admin/ · Formulários publicados: http://127.0.0.
 - **O tipo da pergunta trava depois que o formulário é aberto** (publicado pela primeira vez): as respostas já recebidas deixariam de fazer sentido.
   Vale também para o estilo e a escala da avaliação. Para outro tipo, crie uma pergunta nova (a antiga pode ser excluída; as respostas viram “passadas”).
 - **Aparência**: temas prontos, cores, fonte, cantos, logo, imagem de fundo.
+- **Criação de formulários**: informe o nome e escolha um template visual — BALF 360, Vértuz, Jornada Plenitude, Mentoria Mil Milionários ou Ignis. O tema pode ser ajustado depois em *Aparência*.
 - **Webhook** único por formulário, configurado em *Ajustes*, com duas caixas: **ao concluir o formulário** e/ou **ao responder uma
   pergunta específica** (você escolhe qual). Não dispara a cada pergunta. Assinatura HMAC (`X-Webhook-Signature`), 3 tentativas,
   botões de teste e histórico.

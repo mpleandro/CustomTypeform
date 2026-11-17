@@ -1,6 +1,7 @@
 import { el, fill, api, toast, copy, fmtNum, fmtPct, formUrl } from './ui.js';
 import { renderEditor } from './editor.js';
 import { renderResults } from './results.js';
+import { FORM_TEMPLATES } from './templates.js';
 
 const app = document.getElementById('app');
 let cleanup = null; // set by a view to stop timers when navigating away
@@ -47,10 +48,90 @@ async function listView() {
   const total = forms.reduce((a, f) => ({ views: a.views + f.views, started: a.started + f.started, completed: a.completed + f.completed }), { views: 0, started: 0, completed: 0 });
 
   const create = async (copyFrom, defaultName = '') => {
-    const titulo = prompt('Nome do formulário:', defaultName);
-    if (titulo === null) return;
-    const { form } = await api('POST', '/forms', { titulo, copiar_de: copyFrom });
-    location.hash = `#/forms/${form.id}`;
+    if (copyFrom) {
+      const titulo = prompt('Nome do formulário:', defaultName);
+      if (titulo === null) return;
+      const { form } = await api('POST', '/forms', { titulo, copiar_de: copyFrom });
+      location.hash = `#/forms/${form.id}`;
+      return;
+    }
+
+    let selected = FORM_TEMPLATES[0];
+    const nameInput = el('input', { class: 'input', type: 'text', maxlength: 120, required: true, placeholder: 'Ex.: Pesquisa de satisfação' });
+    nameInput.addEventListener('input', () => nameInput.setCustomValidity(nameInput.value.trim() ? '' : 'Informe o nome do formulário.'));
+    const error = el('p', { class: 'notice err', hidden: true });
+    const createButton = el('button', { class: 'btn primary', type: 'submit' }, 'Criar formulário');
+    const cards = new Map();
+    const grid = el('div', { class: 'template-grid', role: 'group', 'aria-label': 'Templates disponíveis' },
+      FORM_TEMPLATES.map(template => {
+        const card = el('button', {
+          class: `template-option${template.id === selected.id ? ' selected' : ''}`,
+          type: 'button',
+          'aria-pressed': String(template.id === selected.id),
+          onclick() {
+            selected = template;
+            for (const [id, node] of cards) {
+              const active = id === selected.id;
+              node.classList.toggle('selected', active);
+              node.setAttribute('aria-pressed', String(active));
+            }
+          }
+        },
+        el('div', { class: 'template-preview', style: `--template-bg:${template.tema.fundo};--template-fg:${template.tema.texto};--template-accent:${template.tema.destaque};--template-accent2:${template.tema.destaque2}` },
+          el('span', { class: 'template-preview-label', text: 'SEU FORMULÁRIO' }),
+          el('b', { text: 'Uma experiência' }),
+          el('span', { class: 'template-preview-bar' })),
+        el('div', { class: 'template-description' },
+          el('strong', { text: template.nome }),
+          el('span', { text: template.descricao })),
+        el('span', { class: 'template-colors', 'aria-hidden': 'true' },
+          ...[template.tema.fundo, template.tema.destaque, template.tema.destaque2].map(color => el('i', { style: `background:${color}` }))));
+        cards.set(template.id, card);
+        return card;
+      }));
+    const dialog = el('dialog', {
+      class: 'create-dialog',
+      'aria-labelledby': 'create-form-title',
+      onclose: () => dialog.remove(),
+      onclick(event) { if (event.target === dialog) dialog.close(); }
+    });
+    const form = el('form', {
+      class: 'create-form',
+      onsubmit: async event => {
+        event.preventDefault();
+        if (!nameInput.value.trim()) {
+          nameInput.setCustomValidity('Informe o nome do formulário.');
+          nameInput.reportValidity();
+          return;
+        }
+        error.hidden = true;
+        createButton.disabled = true;
+        createButton.textContent = 'Criando…';
+        try {
+          const { form: created } = await api('POST', '/forms', { titulo: nameInput.value.trim(), tema: selected.tema });
+          dialog.close();
+          location.hash = `#/forms/${created.id}`;
+        } catch (err) {
+          error.textContent = err.message;
+          error.hidden = false;
+          createButton.disabled = false;
+          createButton.textContent = 'Criar formulário';
+        }
+      }
+    },
+    el('div', { class: 'create-dialog-head' },
+      el('div', {}, el('h2', { id: 'create-form-title', text: 'Novo formulário' }), el('p', { class: 'muted', text: 'Dê um nome e escolha um ponto de partida visual.' })),
+      el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Fechar', onclick: () => dialog.close() }, '×')),
+    el('label', { class: 'field' }, el('span', { class: 'label', text: 'Nome do formulário' }), nameInput),
+    el('div', { class: 'field' }, el('span', { class: 'label', text: 'Template' }), grid),
+    error,
+    el('div', { class: 'create-dialog-actions' },
+      el('button', { class: 'btn', type: 'button', onclick: () => dialog.close() }, 'Cancelar'),
+      createButton));
+    dialog.append(form);
+    document.body.append(dialog);
+    dialog.showModal();
+    nameInput.focus();
   };
 
   const card = f => el('article', { class: 'card form-card' },

@@ -316,7 +316,12 @@ const adminRoutes = [
         q.proxima = map[q.proxima] || (q.proxima === 'fim' ? 'fim' : '');
         q.ramos = Object.fromEntries(Object.entries(q.ramos || {}).map(([k, v]) => [k, map[v] || v]));
       }
-    } else schema = schemaLib.defaultSchema();
+    } else {
+      schema = schemaLib.defaultSchema();
+      if (body.tema && typeof body.tema === 'object' && !Array.isArray(body.tema)) {
+        schema.tema = { ...schema.tema, ...body.tema };
+      }
+    }
     const id = crypto.randomUUID();
     store.createForm({ id, slug: uniqueSlug(title), title, status: 'draft', schema: schemaLib.sanitize(schema) });
     json(res, 201, { ok: true, form: formPayload(store.getForm(id)) });

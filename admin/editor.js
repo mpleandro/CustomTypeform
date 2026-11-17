@@ -1,4 +1,4 @@
-import { el, fill, api, toast, copy, TIPOS, formUrl, plain, fmtDate, icon, tip, popMenu, typeIcon, statusPill } from './ui.js';
+import { el, fill, api, toast, copy, TIPOS, formUrl, plain, fmtDate, icon, tip, popMenu, typeIcon, statusPill, qrSvg, qrPngBlob, downloadBlob } from './ui.js';
 import { THEME_PRESETS } from './templates.js';
 
 const CHOICE = ['unica', 'multipla', 'dropdown'];
@@ -885,11 +885,20 @@ export async function renderEditor(id, { mount, setCleanup }) {
     slugInput.addEventListener('input', () => {
       const clean = slugUrl(slugInput.value);
       if (clean !== slugInput.value) slugInput.value = clean;
-      S.slug = clean; S.slugErro = ''; slugInput.classList.remove('bad'); touch();
+      S.slug = clean; S.slugErro = ''; slugInput.classList.remove('bad'); touch(); drawQr();
     });
+    // QR code of the form link, next to it. Follows the address being typed (it changes only when saved).
+    const qrImg = el('div', { class: 'qr-img', role: 'img' });
+    const drawQr = () => { try { qrImg.innerHTML = S.slug ? qrSvg(formUrl(S.slug)) : ''; qrImg.setAttribute('aria-label', `QR Code de ${formUrl(S.slug)}`); } catch { qrImg.textContent = ''; } };
+    drawQr();
+    const qrFile = ext => `qrcode-${S.slug || 'formulario'}.${ext}`;
+    const qrBox = el('div', { class: 'qr' }, qrImg,
+      el('button', { class: 'btn sm', type: 'button', disabled: !S.slug, onclick: async () => downloadBlob(await qrPngBlob(formUrl(S.slug)), qrFile('png')) }, icon('download', 14), 'Baixar'),
+      el('button', { class: 'qr-svg', type: 'button', title: 'Vetorial, para impressão em qualquer tamanho', onclick: () => downloadBlob(new Blob([qrSvg(formUrl(S.slug))], { type: 'image/svg+xml' }), qrFile('svg')) }, 'ou SVG'));
     return el('div', {},
       head('Ajustes'),
       el('div', { class: 'section' }, el('h3', { text: 'Link do formulário' }),
+        el('div', { class: 'link-grid' }, el('div', { style: 'min-width:0' },
         el('div', { class: 'slug-box' }, el('span', { text: `${location.host}/f/` }), slugInput),
         S.slugErro
           ? el('p', { class: 'hint', style: 'color:var(--err);margin-top:6px', text: S.slugErro })
@@ -897,7 +906,9 @@ export async function renderEditor(id, { mount, setCleanup }) {
         el('div', { class: 'row wrap', style: 'margin-top:12px' },
           el('button', { class: 'btn sm', type: 'button', onclick: () => copy(formUrl(S.slug)) }, icon('copy', 14), 'Copiar'),
           S.status === 'published' && el('a', { class: 'btn sm', href: `/f/${S.slug}`, target: '_blank', rel: 'noopener' }, icon('external', 14), 'Abrir'),
-          el('button', { class: 'btn ghost sm', type: 'button', onclick: () => { S.slug = slugUrl(plain(S.titulo)) || S.slug; renderPanel(); touch(); } }, 'Usar o nome do formulário'))),
+          el('button', { class: 'btn ghost sm', type: 'button', onclick: () => { S.slug = slugUrl(plain(S.titulo)) || S.slug; renderPanel(); touch(); } }, 'Usar o nome do formulário')),
+        S.status === 'draft' && el('p', { class: 'hint', style: 'margin-top:12px', text: 'O link e o QR Code passam a funcionar quando você publicar.' })),
+        qrBox)),
       el('div', { class: 'section' }, el('h3', { text: 'Comportamento' }),
         toggle(a, 'mostrar_progresso', 'Barra de progresso'),
         toggle(a, 'mostrar_numero', 'Número de cada pergunta'),

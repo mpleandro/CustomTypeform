@@ -165,14 +165,23 @@ export async function renderEditor(id, { mount, setCleanup }) {
         el('span', { class: 'url', text: l.event === 'form.completed' ? 'Formulário concluído' : l.event.endsWith('.test') ? 'Teste' : 'Pergunta respondida' }),
         el('span', { class: 'when', text: fmtDate(l.at) }))));
     }).catch(() => {});
+    // Sends a sample response (fictitious answers to the questions on screen, same shape as a real send) and shows what went.
+    const sent = el('div');
     const test = async perguntaId => {
       if (!w.url) { result.className = 'hint'; result.textContent = 'Cole o endereço primeiro.'; return; }
-      result.className = 'hint'; result.textContent = 'Enviando…';
+      result.className = 'hint'; result.textContent = 'Enviando…'; result.title = '';
       try {
-        const { resultado: r } = await api('POST', `/forms/${id}/webhook-test`, { url: w.url, segredo: w.segredo, pergunta_id: perguntaId });
+        const { resultado: r, payload } = await api('POST', `/forms/${id}/webhook-test`, { url: w.url, segredo: w.segredo, pergunta_id: perguntaId, schema: sch(), titulo: S.titulo });
         result.className = `pill ${r.ok ? 'ok' : 'err'}`;
-        result.textContent = r.ok ? 'Recebido com sucesso' : `Falhou: ${r.error}`;
+        result.textContent = r.ok ? 'Recebido' : `Falhou: ${r.error || `HTTP ${r.status}`}`;
         result.title = r.ok ? `HTTP ${r.status} · ${r.ms}ms` : '';
+        const json = JSON.stringify(payload, null, 2);
+        fill(sent, el('details', { class: 'more payload', open: true },
+          el('summary', {}, 'Dados enviados', el('span', { class: 'muted', style: 'font-weight:400', text: perguntaId ? '· pergunta respondida' : '· formulário concluído' }), icon('chevron', 15)),
+          el('div', { class: 'more-body' },
+            el('div', { class: 'row', style: 'margin-bottom:8px' }, el('p', { class: 'hint grow', text: 'Respostas fictícias, no mesmo formato do envio real. O campo "teste": true marca que é um exemplo.' }),
+              el('button', { class: 'btn ghost sm', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(json); toast('Dados copiados'); } catch { prompt('Copie os dados:', json); } } }, icon('copy', 14), 'Copiar')),
+            el('pre', { class: 'code', text: json }))));
       } catch (e) { result.className = 'pill err'; result.textContent = e.message; }
     };
     const box = el('div', { class: 'section' }, el('h3', {}, 'Integrações', tip('Manda as respostas sozinho para outro sistema (CRM, planilha, Zapier, Make, n8n…) por webhook.')),
@@ -191,9 +200,9 @@ export async function renderEditor(id, { mount, setCleanup }) {
     box.append(
       more('Segurança', field('Chave secreta (opcional)', text(w, 'segredo', { placeholder: 'Uma frase longa' }), undefined, 'Usada para assinar cada envio (cabeçalho X-Webhook-Signature). Assim o outro sistema confere que veio daqui.')),
       el('div', { class: 'row wrap', style: 'margin-top:12px' },
-        el('button', { class: 'btn sm', type: 'button', onclick: () => test(undefined) }, icon('send', 14), 'Enviar teste'),
-        w.ao_responder && w.pergunta && el('button', { class: 'btn sm ghost', type: 'button', onclick: () => test(w.pergunta) }, 'Testar a pergunta'),
-        result), logs);
+        el('button', { class: 'btn sm', type: 'button', title: 'Envia uma resposta fictícia completa, como se alguém tivesse concluído o formulário', onclick: () => test(undefined) }, icon('send', 14), 'Enviar exemplo'),
+        w.ao_responder && w.pergunta && el('button', { class: 'btn sm ghost', type: 'button', title: 'Envia como se a pessoa tivesse acabado de responder a pergunta escolhida', onclick: () => test(w.pergunta) }, 'Exemplo da pergunta'),
+        result), sent, logs);
     return box;
   }
 

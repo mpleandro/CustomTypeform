@@ -113,21 +113,62 @@ function metaFor(form, input) {
 
 const formSummary = f => ({ id: f.id, slug: f.slug, titulo: f.title });
 
+// A believable, valid answer for each question type, used by the webhook test ("send a sample").
+function sampleAnswer(q, i) {
+  const opts = (q.opcoes || []).filter(Boolean);
+  const k = `${q.chave} ${q.rotulo}`.toLowerCase();
+  switch (q.tipo) {
+    case 'texto': return /nome/.test(k) ? (/sobre|ultimo|último/.test(k) ? 'Silva' : /primeiro/.test(k) ? 'Maria' : 'Maria Silva') : /empresa|negócio|negocio|marca/.test(k) ? 'Ateliê Exemplo' : /cargo|profiss/.test(k) ? 'Gerente de marketing' : 'Resposta de exemplo';
+    case 'longo': return 'Esta é uma resposta mais longa de exemplo, com algumas frases, para você ver como textos maiores chegam no seu sistema.';
+    case 'email': return 'maria.silva@exemplo.com';
+    case 'telefone': return '11987654321';
+    case 'numero': return /idade/.test(k) ? 34 : 42;
+    case 'url': return /insta/.test(k) ? 'https://instagram.com/exemplo' : 'https://exemplo.com.br';
+    case 'data': return new Date().toISOString().slice(0, 10);
+    case 'cidade_uf': return { cidade: 'São Paulo', uf: 'SP' };
+    case 'sim_nao': return 'Sim';
+    case 'dropdown': case 'unica': return opts[i % Math.max(1, opts.length)];
+    case 'multipla': { const ok = opts.filter(o => !(q.exclusivas || []).includes(o)); return ok.slice(0, Math.min(2, ok.length)); }
+    case 'matriz': return Object.fromEntries((q.linhas || []).map((_, r) => [String.fromCharCode(65 + r), opts[(r + i) % Math.max(1, opts.length)]]));
+    case 'escala': return Math.max(q.min, q.max - (i % 2));
+  }
+  return undefined;
+}
+// Fills the questions on the route the sample answers take (skipped ones stay empty, like a real response).
+function sampleAnswers(schema) {
+  const answers = {};
+  schema.perguntas.forEach((q, i) => { if (q.tipo !== 'aviso') { const v = sampleAnswer(q, i); if (v !== undefined && !(Array.isArray(v) && !v.length)) answers[q.id] = v; } });
+  const route = new Set(routing.visited(schema.perguntas, answers).map(i => schema.perguntas[i].id));
+  for (const id of Object.keys(answers)) if (!route.has(id)) delete answers[id];
+  return answers;
+}
+const SAMPLE_META = { utm_source: 'instagram', utm_medium: 'bio', utm_campaign: 'teste-webhook' };
+
 /* ---------- webhooks glue ---------- */
 
 // One webhook per form (Ajustes): it fires when the form is completed and/or when one chosen question is answered.
+// Payload builders: shared by the real webhooks and by the "send a sample" test, so both have the same shape.
+const questionPayload = (form, q, response, value, outra) => ({
+  evento: 'question.answered', enviado_em: new Date().toISOString(), formulario: formSummary(form), resposta_id: response.id,
+  pergunta: { id: q.id, chave: q.chave, tipo: q.tipo, rotulo: q.rotulo },
+  resposta: value, ...(outra ? { resposta_outra: outra } : {}),
+  respostas: stats.keyed(form.schema, response.answers), meta: response.meta, concluida: !!response.completed_at
+});
+const completePayload = (form, response, pts, base) => ({
+  evento: 'form.completed', enviado_em: new Date().toISOString(), formulario: formSummary(form), resposta_id: response.id,
+  iniciada_em: response.started_at, concluida_em: response.completed_at,
+  ...(pts ? { pontuacao: pts.pontos, tags: pts.tags, resultado: pts.resultado?.chave || '' } : {}),
+  // Result button: tracked link (records the click and redirects), the real destination and where to ask whether it was clicked.
+  ...(response.answers._pontuacao?.destino ? { link_resultado: `${base}/go/${response.id}`, link_destino: response.answers._pontuacao.destino, verificar_clique: `${base}/api/clique/${response.id}` } : {}),
+  respostas: stats.keyed(form.schema, response.answers), meta: response.meta
+});
+
 function fireQuestionHook(form, q, response, value, outra) {
   const w = form.schema.ajustes.webhook;
   if (!w.ao_responder || !w.url || w.pergunta !== q.id) return;
   hooks.dispatch({
     form_id: form.id, response_id: response.id, question_id: q.id, event: 'question.answered',
-    url: w.url, secret: w.segredo,
-    payload: {
-      evento: 'question.answered', enviado_em: new Date().toISOString(), formulario: formSummary(form), resposta_id: response.id,
-      pergunta: { id: q.id, chave: q.chave, tipo: q.tipo, rotulo: q.rotulo },
-      resposta: value, ...(outra ? { resposta_outra: outra } : {}),
-      respostas: stats.keyed(form.schema, response.answers), meta: response.meta, concluida: !!response.completed_at
-    }
+    url: w.url, secret: w.segredo, payload: questionPayload(form, q, response, value, outra)
   });
 }
 const baseUrl = req => process.env.PUBLIC_URL || `${isHttps(req) ? 'https' : 'http'}://${req.headers.host}`;
@@ -136,14 +177,7 @@ function fireCompleteHook(form, response, pts, base) {
   if (!w.ao_concluir || !w.url) return;
   hooks.dispatch({
     form_id: form.id, response_id: response.id, question_id: null, event: 'form.completed', url: w.url, secret: w.segredo,
-    payload: {
-      evento: 'form.completed', enviado_em: new Date().toISOString(), formulario: formSummary(form), resposta_id: response.id,
-      iniciada_em: response.started_at, concluida_em: response.completed_at,
-      ...(pts ? { pontuacao: pts.pontos, tags: pts.tags, resultado: pts.resultado?.chave || '' } : {}),
-      // Result button: tracked link (records the click and redirects), the real destination and where to ask whether it was clicked.
-      ...(response.answers._pontuacao?.destino ? { link_resultado: `${base}/go/${response.id}`, link_destino: response.answers._pontuacao.destino, verificar_clique: `${base}/api/clique/${response.id}` } : {}),
-      respostas: stats.keyed(form.schema, response.answers), meta: response.meta
-    }
+    payload: completePayload(form, response, pts, base)
   });
 }
 const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -417,12 +451,29 @@ const adminRoutes = [
     const body = await readJson(req);
     let url;
     try { url = new URL(body.url); if (!/^https?:$/.test(url.protocol)) throw 0; } catch { return fail(res, 422, 'URL inválida.'); }
-    const q = f.schema.perguntas.find(x => x.id === body.pergunta_id);
-    const sample = q
-      ? { evento: 'question.answered', teste: true, enviado_em: new Date().toISOString(), formulario: formSummary(f), resposta_id: 'teste', pergunta: { id: q.id, chave: q.chave, tipo: q.tipo, rotulo: q.rotulo }, resposta: 'Exemplo de resposta', respostas: { [q.chave]: 'Exemplo de resposta' }, meta: {}, concluida: false }
-      : { evento: 'form.completed', teste: true, enviado_em: new Date().toISOString(), formulario: formSummary(f), resposta_id: 'teste', respostas: {}, meta: {} };
+    // Uses what is open in the editor (even unsaved), so the sample matches the questions on screen.
+    let schema = f.schema;
+    if (body.schema && typeof body.schema === 'object') { try { schema = schemaLib.sanitize(body.schema, f.schema); } catch { schema = f.schema; } }
+    const form = { ...f, title: isText(body.titulo) && body.titulo.trim() ? body.titulo.trim() : f.title, schema };
+    const all = sampleAnswers(schema);
+    const q = schema.perguntas.find(x => x.id === body.pergunta_id && x.tipo !== 'aviso');
+    const started = new Date(Date.now() - 3 * 60_000).toISOString();
+    let sample;
+    if (q) {
+      // Only what the person would have answered up to this question.
+      const upTo = schema.perguntas.indexOf(q), answers = {};
+      for (const [qid, v] of Object.entries(all)) if (schema.perguntas.findIndex(x => x.id === qid) <= upTo) answers[qid] = v;
+      if (answers[q.id] === undefined) answers[q.id] = sampleAnswer(q, upTo);
+      sample = questionPayload(form, q, { id: 'teste', answers, meta: SAMPLE_META, completed_at: null }, answers[q.id]);
+    } else {
+      const pts = score.compute(schema, all);
+      const answers = { ...all };
+      if (pts?.resultado?.botao_url) answers._pontuacao = { destino: fillUrl(pts.resultado.botao_url, schema, all, 'teste') };
+      sample = completePayload(form, { id: 'teste', answers, meta: SAMPLE_META, started_at: started, completed_at: new Date().toISOString() }, pts, baseUrl(req));
+    }
+    sample = { teste: true, ...sample };
     const r = await hooks.once({ form_id: id, response_id: null, question_id: q?.id || null, event: `${sample.evento}.test`, url: url.href, secret: isText(body.segredo) ? body.segredo.trim() : '', payload: sample });
-    json(res, 200, { ok: true, resultado: r });
+    json(res, 200, { ok: true, resultado: r, payload: sample });
   }],
 
   ['POST', '/api/admin/upload', async (req, res) => {

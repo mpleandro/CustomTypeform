@@ -1,4 +1,4 @@
-import { el, fill, api, toast, copy, fmtNum, fmtPct, formUrl, icon, popMenu, statusPill } from './ui.js';
+import { el, fill, api, toast, copy, fmtNum, fmtPct, formUrl, icon, popMenu, statusPill, themeSwitch } from './ui.js';
 import { renderEditor } from './editor.js';
 import { renderResults } from './results.js';
 import { FORM_TEMPLATES } from './templates.js';
@@ -40,6 +40,7 @@ function shell(content) {
     el('header', { class: 'topbar' },
       el('a', { href: '#/' }, brand()),
       el('div', { class: 'grow' }),
+      themeSwitch(),
       el('button', { class: 'btn ghost sm', onclick: async () => { await api('POST', '/logout'); route(); } }, icon('logout', 15), 'Sair')),
     el('main', { class: 'page' }, content));
 }

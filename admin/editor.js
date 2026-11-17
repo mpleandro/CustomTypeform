@@ -18,42 +18,60 @@ const slugUrl = v => String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').to
 
 export async function renderEditor(id, { mount, setCleanup }) {
   const { form } = await api('GET', `/forms/${id}`);
+  // A live form may have saved-but-unpublished edits: the editor opens on them.
+  const d = form.rascunho;
+  const publishedIds = form.schema.perguntas.map(q => q.id);
+  if (d) Object.assign(form, { titulo: d.titulo, slug: d.slug, schema: d.schema });
   const S = {
-    titulo: form.titulo, slug: form.slug, status: form.status, schema: form.schema,
+    titulo: form.titulo, slug: form.slug, status: form.status, schema: form.schema, pendente: !!d,
     tab: 'conteudo', sel: form.schema.boas_vindas.ativo || !form.schema.perguntas.length ? 'welcome' : form.schema.perguntas[0].id,
     problemas: [], slugErro: '', mobile: false, opened: !!form.aberto_em, previewSub: 'closed'
   };
   // Questions already saved once the form was opened can't change type (past answers would stop making sense).
-  let savedIds = new Set(form.schema.perguntas.map(q => q.id));
+  // Only the published version counts: questions that exist just in unpublished edits stay editable.
+  let savedIds = new Set(publishedIds);
   const isLocked = q => S.opened && savedIds.has(q.id);
   const sch = () => S.schema;
 
   /* ----- saving ----- */
-  const stateEl = el('span', { class: 'save-state', role: 'status', text: 'Salvo' });
+  const stateEl = el('span', { class: 'save-state', role: 'status' });
   let saving = null, pending = false, dirty = false;
+  const live = () => S.status !== 'draft';
+  // "Salvo" for drafts; for a live form, saved edits are flagged until they are published.
+  function syncState() {
+    stateEl.textContent = dirty ? 'Não salvo' : live() && S.pendente ? 'Salvo · não publicado' : 'Salvo';
+    stateEl.classList.toggle('dirty', dirty || (live() && S.pendente));
+  }
+  syncState();
 
   function touch() {
     dirty = true;
-    stateEl.textContent = S.status === 'published' ? 'Não publicado' : 'Não salvo';
-    stateEl.classList.add('dirty');
+    syncState();
     sendPreview();
     syncSaveBtn();
   }
 
-  async function save() {
+  // asDraft: on a live form, keeps the edits without publishing them.
+  async function save(asDraft = false) {
     if (saving) { pending = true; return saving; }
+    asDraft = asDraft && live();
     saving = (async () => {
       stateEl.textContent = 'Salvando…';
       try {
-        await api('PUT', `/forms/${id}`, { titulo: S.titulo, slug: S.slug, status: S.status, schema: sch() });
-        dirty = false; S.slugErro = ''; form.slug = S.slug; stateEl.textContent = 'Salvo'; stateEl.classList.remove('dirty');
-        if (S.status !== 'draft') S.opened = true;
-        savedIds = new Set(sch().perguntas.map(q => q.id));
+        await api('PUT', `/forms/${id}`, { titulo: S.titulo, slug: S.slug, status: S.status, schema: sch(), rascunho: asDraft });
+        dirty = false; S.slugErro = ''; S.pendente = asDraft;
+        if (!asDraft) {
+          form.slug = S.slug;
+          if (S.status !== 'draft') S.opened = true;
+          savedIds = new Set(sch().perguntas.map(q => q.id));
+        }
+        syncState();
         syncSaveBtn();
         if (S.problemas.length) { S.problemas = []; renderPanel(); }
         return true;
       } catch (e) {
         stateEl.textContent = 'Erro ao salvar';
+        stateEl.classList.add('dirty');
         if (e.data?.campo === 'slug') { S.slugErro = e.message; S.tab = 'ajustes'; syncTabs(); }
         else if (e.data?.problemas) { S.problemas = e.data.problemas; }
         else toast(e.message, 'err');
@@ -63,7 +81,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
     })();
     const ok = await saving;
     saving = null;
-    if (pending) { pending = false; return save(); }
+    if (pending) { pending = false; return save(asDraft); }
     return ok;
   }
 
@@ -77,7 +95,8 @@ export async function renderEditor(id, { mount, setCleanup }) {
   }
   const onMessage = e => { if (e.origin === location.origin && e.data?.type === 'ctf-ready') { ready = true; sendPreview(); } };
   const onBeforeUnload = e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } };
-  const onKey = e => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (dirty) saveNow(); } };
+  // Cmd/Ctrl+S only saves; on a live form publishing is always a separate click.
+  const onKey = e => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (dirty) (live() ? saveDraftNow() : saveNow()); } };
   window.addEventListener('message', onMessage);
   window.addEventListener('beforeunload', onBeforeUnload);
   document.addEventListener('keydown', onKey);
@@ -91,12 +110,27 @@ export async function renderEditor(id, { mount, setCleanup }) {
   async function saveNow() {
     if (await save()) toast(S.status === 'published' ? 'Alterações publicadas' : S.status === 'closed' ? 'Alterações salvas' : 'Rascunho salvo');
   }
+  async function saveDraftNow() {
+    if (await save(true)) toast('Alterações salvas. O formulário no ar continua igual até você publicar.');
+  }
+  async function discardDraft() {
+    if (!confirm('Descartar as alterações não publicadas? O editor volta para a versão que está no ar.')) return;
+    await api('DELETE', `/forms/${id}/rascunho`);
+    dirty = false;
+    toast('Alterações descartadas');
+    location.reload();
+  }
+  // Live form: "Salvar" keeps the edits aside, "Publicar alterações" puts them on the air. Draft form: a single "Salvar".
+  const draftBtn = el('button', { class: 'btn sm', onclick: saveDraftNow, title: 'Salva sem publicar (Cmd/Ctrl + S)' }, 'Salvar');
   const saveBtn = el('button', { class: 'btn sm', onclick: saveNow });
   function syncSaveBtn() {
-    saveBtn.disabled = !dirty;
-    saveBtn.className = `btn sm${dirty ? ' primary' : ''}`;
-    saveBtn.textContent = S.status === 'published' ? 'Publicar alterações' : 'Salvar';
-    saveBtn.title = 'Cmd/Ctrl + S';
+    const canPublish = dirty || (live() && S.pendente);
+    draftBtn.hidden = !live();
+    draftBtn.disabled = !dirty;
+    saveBtn.disabled = live() ? !canPublish : !dirty;
+    saveBtn.className = `btn sm${(live() ? canPublish : dirty) ? ' primary' : ''}`;
+    saveBtn.textContent = S.status === 'published' ? 'Publicar alterações' : S.status === 'closed' ? 'Aplicar alterações' : 'Salvar';
+    saveBtn.title = live() ? 'Coloca as alterações no ar' : 'Cmd/Ctrl + S';
   }
 
   /* ----- field helpers ----- */
@@ -231,27 +265,28 @@ export async function renderEditor(id, { mount, setCleanup }) {
     : q.tipo === 'escala' ? Array.from({ length: q.max - q.min + 1 }, (_, k) => String(q.min + k)) : []);
 
   // What each answer sends: the label the person saw (default) or a custom value.
+  // What the webhook receives for each question: the field name (the question's "chave") and, for options, the value of each answer.
   function valuesSection() {
     const qs = sch().perguntas.map((q, i) => ({ q, i })).filter(({ q }) => q.tipo !== 'aviso');
-    const withOpts = qs.filter(({ q }) => valueOptionsOf(q).length);
-    const open = qs.filter(({ q }) => !valueOptionsOf(q).length);
     const card = ({ q, i }) => {
       q.valores ??= {};
+      const key = el('input', { class: 'input mono key-input', value: q.chave, 'aria-label': `Nome do campo da pergunta ${i + 1}`, title: 'Nome do campo enviado no webhook' });
+      key.addEventListener('input', () => { q._auto = false; q.chave = key.value; touch(); });
+      key.addEventListener('blur', () => { q.chave = uniqueKey(slugKey(key.value) || 'pergunta', q); key.value = q.chave; touch(); renderList(); });
       const rows = valueOptionsOf(q).map(o => {
         const input = el('input', { class: 'input mono', value: q.valores[o] ?? '', placeholder: o, 'aria-label': `Valor enviado para “${o}”` });
         input.addEventListener('input', () => { const v = input.value.trim(); if (v && v !== o) q.valores[o] = input.value; else delete q.valores[o]; touch(); });
         return el('div', { class: 'val-row' }, el('span', { class: 'route-val', title: o, text: q.tipo === 'escala' ? faceFor(q, Number(o)) : o }), icon('right', 14), input);
       });
       return el('div', { class: 'rule' },
-        el('div', { class: 'val-head' }, typeIcon(q.tipo), el('b', { class: 'grow', text: `${i + 1}. ${plain(q.rotulo) || 'Sem título'}` }), el('code', { class: 'key', title: 'Nome do campo no webhook', text: q.chave })),
-        el('div', { class: 'val-cols' }, el('span', { text: 'Resposta' }), el('span'), el('span', { text: 'Valor enviado' })),
+        el('div', { class: `val-head${rows.length ? '' : ' solo'}` }, typeIcon(q.tipo), el('b', { class: 'grow', title: plain(q.rotulo), text: `${i + 1}. ${plain(q.rotulo) || 'Sem título'}` }), icon('right', 14), key),
+        rows.length > 0 && el('div', { class: 'val-cols' }, el('span', { text: 'Resposta' }), el('span'), el('span', { text: 'Valor enviado' })),
         rows);
     };
     return el('div', { class: 'section' },
-      el('h3', {}, 'Valores das respostas', tip('O webhook envia o valor. Vazio: envia o próprio texto da opção. A planilha CSV traz as duas colunas (texto e valor); o painel continua mostrando o texto.')),
-      el('p', { class: 'hint', text: 'Troque o que é enviado para cada opção. Ex.: “De R$ 1.000 a R$ 2.000” → abaixo_2000.' }),
-      withOpts.length ? withOpts.map(card) : el('p', { class: 'note' }, icon('info', 14), 'Nenhuma pergunta de opções ainda.'),
-      open.length > 0 && el('p', { class: 'hint', style: 'margin-top:8px' }, `Perguntas abertas enviam o que a pessoa digitou: ${open.map(({ q }) => q.chave).join(', ')}.`));
+      el('h3', {}, 'Campos e valores enviados', tip('O webhook envia o nome do campo com o valor. Valor vazio: envia o próprio texto da opção. A planilha CSV traz as duas colunas (texto e valor); o painel continua mostrando o texto.')),
+      el('p', { class: 'hint', text: 'À direita, o nome do campo de cada pergunta (também usado na planilha). Nas opções, o valor enviado. Ex.: “De R$ 1.000 a R$ 2.000” → abaixo_2000.' }),
+      qs.length ? qs.map(card) : el('p', { class: 'note' }, icon('info', 14), 'Nenhuma pergunta ainda.'));
   }
 
   // Hidden fields sent with every webhook, never shown to the respondent (e.g. user_tag).
@@ -1057,6 +1092,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
   }
 
   async function setStatus(next, message) {
+    if (live() && (dirty || S.pendente) && !confirm('Há alterações não publicadas. Elas também serão aplicadas. Continuar?')) return;
     const before = S.status;
     S.problemas = []; S.status = next;
     if (await save()) toast(message); else S.status = before;
@@ -1078,6 +1114,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
       S.status === 'published' && null,
       S.status === 'published' && ['Encerrar agora', 'stop', closeNow],
       S.status === 'closed' && ['Reabrir', 'play', reopen],
+      live() && S.pendente && !dirty && ['Descartar alterações não publicadas', 'undo', discardDraft, { danger: true }],
       S.status !== 'draft' && ['Tirar do ar', 'eyeoff', unpublish, { danger: true }]
     ]) }, icon('more', 18));
     const actions = el('div', { class: 'ed-actions' },
@@ -1085,6 +1122,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
       stateEl,
       el('a', { class: 'btn sm icon ghost', href: `#/forms/${id}/results`, title: 'Resultados', 'aria-label': 'Resultados', onclick: leave }, icon('chart', 17)),
       moreBtn,
+      draftBtn,
       saveBtn,
       S.status === 'draft' && el('button', { class: 'btn accent sm', onclick: publish }, 'Publicar'));
     fill(topEl,

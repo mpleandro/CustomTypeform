@@ -395,6 +395,9 @@ td.go{width:36px;color:var(--muted)}
 /* integrations */
 .val-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
 .val-head b{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.val-head.solo{margin-bottom:0}.val-head>.ico{color:var(--muted);flex:none}
+.key-input{width:220px;flex:none;height:34px}
+@media(max-width:700px){.val-head{flex-wrap:wrap}.key-input{width:100%}}
 .key{font:12px var(--mono);color:var(--muted);background:var(--soft);padding:2px 6px;border-radius:var(--r-sm);white-space:nowrap}
 .val-cols,.val-row{display:grid;grid-template-columns:minmax(0,1fr) 16px minmax(0,1fr);gap:10px;align-items:center}
 .val-cols{font-size:12px;color:var(--muted);font-weight:550;margin-bottom:6px}
@@ -483,3 +486,5 @@ td.go{width:36px;color:var(--muted)}
   .route-row{grid-template-columns:minmax(0,1fr) 16px minmax(0,1.3fr)}
   .create-form{padding:20px}.create-dialog-actions{padding:12px 20px;margin:0 -20px -20px}
 }
+
+.pending-note{font-style:normal;color:var(--warn,#b45309)}

@@ -1,11 +1,11 @@
-import { el, fill, api, toast, copy, TIPOS, formUrl, plain, fmtDate } from './ui.js';
+import { el, fill, api, toast, copy, TIPOS, formUrl, plain, fmtDate, icon, tip, popMenu, typeIcon, statusPill } from './ui.js';
 import { THEME_PRESETS } from './templates.js';
 
 const CHOICE = ['unica', 'multipla', 'dropdown'];
 const UFS = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO','Exterior'];
 const TEXTLIKE = ['texto', 'longo', 'email', 'telefone', 'numero', 'url'];
 const FONTS = ['Inter', 'Manrope', 'DM Sans', 'Poppins', 'Montserrat', 'Space Grotesk', 'Sora', 'Outfit', 'Playfair Display', 'Lora'];
-const TOKENS_HINT = 'Use *palavra* para destacar na cor do tema e {chave} para citar uma resposta anterior (ex.: {primeiro_nome}).';
+const TOKENS_HINT = 'Dica: *palavra* destaca na cor do tema. {nome} mostra a resposta da pergunta “nome”.';
 
 const branchValuesOf = q => (q.tipo === 'unica' ? [...q.opcoes.filter(Boolean), ...(q.outra ? ['Outra'] : [])]
   : q.tipo === 'dropdown' ? q.opcoes.filter(Boolean).concat(q.outra ? ['Outra'] : [])
@@ -29,12 +29,12 @@ export async function renderEditor(id, { mount, setCleanup }) {
   const sch = () => S.schema;
 
   /* ----- saving ----- */
-  const stateEl = el('span', { class: 'save-state', text: 'Salvo' });
+  const stateEl = el('span', { class: 'save-state', role: 'status', text: 'Salvo' });
   let saving = null, pending = false, dirty = false;
 
   function touch() {
     dirty = true;
-    stateEl.textContent = S.status === 'draft' ? 'Alterações não salvas' : 'Alterações não publicadas';
+    stateEl.textContent = S.status === 'published' ? 'Não publicado' : 'Não salvo';
     stateEl.classList.add('dirty');
     sendPreview();
     syncSaveBtn();
@@ -46,7 +46,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
       stateEl.textContent = 'Salvando…';
       try {
         await api('PUT', `/forms/${id}`, { titulo: S.titulo, slug: S.slug, status: S.status, schema: sch() });
-        dirty = false; S.slugErro = ''; stateEl.textContent = 'Salvo'; stateEl.classList.remove('dirty');
+        dirty = false; S.slugErro = ''; form.slug = S.slug; stateEl.textContent = 'Salvo'; stateEl.classList.remove('dirty');
         if (S.status !== 'draft') S.opened = true;
         savedIds = new Set(sch().perguntas.map(q => q.id));
         syncSaveBtn();
@@ -95,20 +95,28 @@ export async function renderEditor(id, { mount, setCleanup }) {
   function syncSaveBtn() {
     saveBtn.disabled = !dirty;
     saveBtn.className = `btn sm${dirty ? ' primary' : ''}`;
-    saveBtn.textContent = S.status === 'published' ? 'Salvar e publicar' : S.status === 'closed' ? 'Salvar alterações' : 'Salvar rascunho';
+    saveBtn.textContent = S.status === 'published' ? 'Publicar alterações' : 'Salvar';
+    saveBtn.title = 'Cmd/Ctrl + S';
   }
 
   /* ----- field helpers ----- */
-  const field = (label, control, hint) => el('div', { class: 'field' }, label && el('label', { text: label }), control, hint && el('p', { class: 'hint', text: hint }));
+  // label · control · visible hint (only when it matters) · tip (help hidden behind an icon)
+  const field = (label, control, hint, help) => el('div', { class: 'field' },
+    label && el('label', {}, ...labelParts(label), help && tip(help)), control, hint && el('p', { class: 'hint', text: hint }));
+  const labelParts = label => { const m = /^(.*?)\s*\((opcional)\)$/.exec(label); return m ? [m[1], el('span', { class: 'opt', text: 'opcional' })] : [label]; };
+  const more = (label, ...children) => el('details', { class: 'more' }, el('summary', {}, label, icon('chevron', 15)), el('div', { class: 'more-body' }, ...children));
+  const head = (title, eyebrow, ...actions) => el('div', { class: 'panel-head' },
+    el('div', { class: 'grow', style: 'min-width:0' }, eyebrow && el('div', { class: 'eyebrow' }, ...[eyebrow].flat()), el('h2', { text: title })), ...actions);
   function text(obj, key, { multiline, placeholder, rows, onchange, type } = {}) {
     const node = el(multiline ? 'textarea' : 'input', { class: multiline ? 'textarea' : 'input', value: obj[key] ?? '', placeholder, rows, type: multiline ? undefined : type });
     node.addEventListener('input', () => { obj[key] = node.value; onchange?.(node.value); touch(); });
     return node;
   }
-  function toggle(obj, key, label, { onchange, rerender } = {}) {
+  function toggle(obj, key, label, opts = {}) {
+    const { onchange, rerender } = opts;
     const input = el('input', { type: 'checkbox', checked: !!obj[key] });
     input.addEventListener('change', () => { obj[key] = input.checked; onchange?.(); touch(); if (rerender) renderPanel(); });
-    return el('label', { class: 'switch' }, input, el('span', { text: label }));
+    return el('label', { class: 'switch' }, input, el('span', { text: label }), opts.help && tip(opts.help));
   }
   function select(obj, key, options, onchange) {
     const node = el('select', { class: 'select' }, options.map(([v, l]) => el('option', { value: v, text: l })));
@@ -118,7 +126,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
   }
   function color(obj, key) {
     const picker = el('input', { type: 'color', value: obj[key] });
-    const hex = el('input', { class: 'input mono', value: obj[key], maxlength: 7, style: 'width:110px' });
+    const hex = el('input', { class: 'input mono', value: obj[key], maxlength: 7, 'aria-label': 'Código da cor' });
     picker.addEventListener('input', () => { obj[key] = picker.value; hex.value = picker.value; touch(); });
     hex.addEventListener('input', () => { if (/^#[0-9a-f]{6}$/i.test(hex.value)) { obj[key] = hex.value.toLowerCase(); picker.value = obj[key]; touch(); } });
     return el('div', { class: 'color-row' }, picker, hex);
@@ -129,7 +137,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
     if (!res.ok) throw new Error(data.erro || 'Falha no upload.');
     return data.url;
   }
-  function imageField(obj, key, label, hint, onchange) {
+  function imageField(obj, key, label, help, onchange) {
     const holder = el('div');
     const draw = () => {
       const input = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif,image/svg+xml', hidden: true });
@@ -139,11 +147,11 @@ export async function renderEditor(id, { mount, setCleanup }) {
       });
       fill(holder, el('div', { class: 'upload' },
         obj[key] && el('img', { src: obj[key], alt: '' }),
-        el('button', { class: 'btn sm', type: 'button', onclick: () => input.click() }, obj[key] ? 'Trocar imagem' : 'Enviar imagem'),
+        el('button', { class: 'btn sm', type: 'button', onclick: () => input.click() }, icon('upload', 14), obj[key] ? 'Trocar' : 'Enviar imagem'),
         obj[key] && el('button', { class: 'btn ghost sm danger', type: 'button', onclick: () => { obj[key] = ''; touch(); onchange?.(); draw(); } }, 'Remover'), input));
     };
     draw();
-    return field(label, holder, hint);
+    return field(label, holder, undefined, help);
   }
 
   /* ----- webhook: one per form, fired on completion and/or when one chosen question is answered ----- */
@@ -152,36 +160,40 @@ export async function renderEditor(id, { mount, setCleanup }) {
     const result = el('span', { class: 'hint' });
     const logs = el('div', { class: 'log-list' });
     api('GET', `/forms/${id}/webhook-logs`).then(({ logs: rows }) => {
-      fill(logs, rows.slice(0, 5).map(l => el('div', { class: 'log' },
-        el('span', { class: `pill ${l.ok ? 'ok' : 'err'}`, text: l.ok ? l.status : l.error || 'erro' }),
-        el('span', { class: 'when', text: fmtDate(l.at) }), el('span', { class: 'url', text: l.event === 'form.completed' ? 'conclusão' : l.event.endsWith('.test') ? 'teste' : 'pergunta' }))));
+      fill(logs, rows.length > 0 && el('p', { class: 'hint', text: 'Últimos envios' }), rows.slice(0, 5).map(l => el('div', { class: 'log' },
+        el('span', { class: `pill ${l.ok ? 'ok' : 'err'}`, title: l.ok ? `HTTP ${l.status}` : l.error || '', text: l.ok ? 'Entregue' : 'Falhou' }),
+        el('span', { class: 'url', text: l.event === 'form.completed' ? 'Formulário concluído' : l.event.endsWith('.test') ? 'Teste' : 'Pergunta respondida' }),
+        el('span', { class: 'when', text: fmtDate(l.at) }))));
     }).catch(() => {});
     const test = async perguntaId => {
-      if (!w.url) { result.className = 'hint'; result.textContent = 'Informe a URL primeiro.'; return; }
+      if (!w.url) { result.className = 'hint'; result.textContent = 'Cole o endereço primeiro.'; return; }
       result.className = 'hint'; result.textContent = 'Enviando…';
       try {
         const { resultado: r } = await api('POST', `/forms/${id}/webhook-test`, { url: w.url, segredo: w.segredo, pergunta_id: perguntaId });
         result.className = `pill ${r.ok ? 'ok' : 'err'}`;
-        result.textContent = r.ok ? `OK · HTTP ${r.status} · ${r.ms}ms` : `Falhou · ${r.error}`;
+        result.textContent = r.ok ? 'Recebido com sucesso' : `Falhou: ${r.error}`;
+        result.title = r.ok ? `HTTP ${r.status} · ${r.ms}ms` : '';
       } catch (e) { result.className = 'pill err'; result.textContent = e.message; }
     };
-    const box = el('div', { class: 'section' }, el('h3', { text: 'Webhook' }),
-      el('p', { class: 'hint', style: 'margin-bottom:12px', text: 'Envia as respostas para um endereço seu (n8n, Make, Zapier, CRM…). Marque quando disparar: no fim do formulário, em uma pergunta específica, ou nos dois. Sem nenhuma marcada, o webhook fica desligado.' }),
-      field('URL de destino', text(w, 'url', { placeholder: 'https://seu-servidor.com/webhook', type: 'url' }), 'Recebe um POST em JSON. Falhas são reenviadas até 3 vezes.'),
-      field('Segredo de assinatura (opcional)', text(w, 'segredo', { placeholder: 'Ex.: uma frase longa' }), 'Se preenchido, enviamos o cabeçalho X-Webhook-Signature (HMAC-SHA256 do corpo).'),
-      toggle(w, 'ao_concluir', 'Ao concluir o formulário (envia todas as respostas)'),
-      toggle(w, 'ao_responder', 'Ao responder uma pergunta específica', { rerender: true, onchange: refresh }));
+    const box = el('div', { class: 'section' }, el('h3', {}, 'Integrações', tip('Manda as respostas sozinho para outro sistema (CRM, planilha, Zapier, Make, n8n…) por webhook.')),
+      el('p', { class: 'hint', text: 'Envie as respostas para outro sistema.' }),
+      field('Endereço de destino', text(w, 'url', { placeholder: 'https://…', type: 'url' }), undefined, 'A URL do webhook que vai receber as respostas.'),
+      el('div', { class: 'label', style: 'margin-bottom:10px' }, 'Quando enviar'),
+      toggle(w, 'ao_concluir', 'Quando a pessoa concluir'),
+      toggle(w, 'ao_responder', 'Quando responder uma pergunta', { rerender: true, onchange: refresh }));
     if (w.ao_responder) {
-      const sel = el('select', { class: 'select' }, [['', 'Escolha a pergunta…'], ...sch().perguntas.map((q, i) => [q.id, `Pergunta ${i + 1} — ${plain(q.rotulo).slice(0, 56) || 'sem título'}`]).filter((_, i) => sch().perguntas[i].tipo !== 'aviso')]
+      const sel = el('select', { class: 'select', 'aria-label': 'Pergunta' }, [['', 'Escolha a pergunta…'], ...sch().perguntas.map((q, i) => [q.id, `${i + 1}. ${plain(q.rotulo).slice(0, 56) || 'Sem título'}`]).filter((_, i) => sch().perguntas[i].tipo !== 'aviso')]
         .map(([v, l]) => el('option', { value: v, text: l })));
       sel.value = w.pergunta;
       sel.addEventListener('change', () => { w.pergunta = sel.value; touch(); refresh(); });
-      box.append(field('Pergunta que dispara o webhook', sel, 'Dispara quando a pessoa responde esta pergunta e avança, sem esperar o fim. Envia a resposta, as respostas anteriores e os dados de rastreio (UTMs).'));
+      box.append(el('div', { class: 'field', style: 'margin:-4px 0 16px 42px' }, sel));
     }
-    box.append(el('div', { class: 'row wrap' },
-      el('button', { class: 'btn sm', type: 'button', onclick: () => test(undefined) }, 'Testar envio de conclusão'),
-      w.ao_responder && w.pergunta && el('button', { class: 'btn sm', type: 'button', onclick: () => test(w.pergunta) }, 'Testar envio da pergunta'),
-      result), logs);
+    box.append(
+      more('Segurança', field('Chave secreta (opcional)', text(w, 'segredo', { placeholder: 'Uma frase longa' }), undefined, 'Usada para assinar cada envio (cabeçalho X-Webhook-Signature). Assim o outro sistema confere que veio daqui.')),
+      el('div', { class: 'row wrap', style: 'margin-top:12px' },
+        el('button', { class: 'btn sm', type: 'button', onclick: () => test(undefined) }, icon('send', 14), 'Enviar teste'),
+        w.ao_responder && w.pergunta && el('button', { class: 'btn sm ghost', type: 'button', onclick: () => test(w.pergunta) }, 'Testar a pergunta'),
+        result), logs);
     return box;
   }
 
@@ -194,12 +206,13 @@ export async function renderEditor(id, { mount, setCleanup }) {
   function select_(key) { S.sel = key; renderList(); renderPanel(); sendPreview(); }
 
   function item(key, badge, label, extra = {}) {
-    const node = el('div', { class: `li${S.sel === key ? ' sel' : ''}`, onclick: () => select_(key), ...(extra.draggable ? { draggable: 'true' } : {}) },
-      extra.draggable && el('span', { class: 'grab', text: '⋮⋮' }),
-      el('span', { class: 'badge', text: badge }),
-      el('span', { class: 'txt', text: label }),
-      extra.route && el('span', { class: 'route-mark', title: 'Tem lógica de navegação' }, '↪'),
-      extra.hook && el('span', { class: 'hook', title: 'O webhook dispara nesta pergunta' }));
+    const node = el('div', { class: `li${S.sel === key ? ' sel' : ''}${extra.off ? ' off' : ''}`, role: 'button', tabindex: '0', 'aria-current': S.sel === key ? 'true' : undefined,
+      onclick: () => select_(key), onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select_(key); } }, ...(extra.draggable ? { draggable: 'true' } : {}) },
+      extra.draggable && el('span', { class: 'grab', 'aria-hidden': 'true' }, icon('grip', 12)),
+      typeof badge === 'string' ? el('span', { class: 'badge' }, icon(badge, 14)) : badge,
+      el('span', { class: 'txt' }, extra.n && el('em', { text: extra.n }), label),
+      extra.route && el('span', { class: 'mark', title: 'Tem lógica: pula para outra pergunta' }, icon('route', 14)),
+      extra.hook && el('span', { class: 'mark hook', title: 'Envia para a integração ao responder' }, icon('zap', 14)));
     if (extra.draggable) {
       node.addEventListener('dragstart', e => { dragFrom = extra.index; e.dataTransfer.effectAllowed = 'move'; });
       node.addEventListener('dragover', e => { e.preventDefault(); node.classList.add('over'); });
@@ -218,12 +231,15 @@ export async function renderEditor(id, { mount, setCleanup }) {
   function openAddMenu(anchor) {
     document.querySelector('.menu')?.remove();
     const rect = anchor.getBoundingClientRect();
-    const menu = el('div', { class: 'menu', style: `left:${Math.max(8, rect.left)}px;top:${rect.bottom + 6}px` },
-      Object.entries(TIPOS).map(([tipo, t]) => el('button', { type: 'button', onclick: () => { menu.remove(); addQuestion(tipo); } },
-        el('span', { class: 'badge', text: t.sigla }), el('span', {}, t.nome, el('small', { text: t.desc })))));
+    const menu = el('div', { class: 'menu', role: 'menu', 'aria-label': 'Tipo de pergunta', style: `left:${Math.max(8, rect.left)}px;top:${Math.min(rect.bottom + 6, window.innerHeight - 340)}px` },
+      Object.entries(TIPOS).map(([tipo, t]) => el('button', { type: 'button', role: 'menuitem', onclick: () => { done(); addQuestion(tipo); } },
+        typeIcon(tipo), el('span', {}, t.nome, el('small', { text: t.desc })))));
     document.body.append(menu);
-    const close = e => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', close); } };
-    setTimeout(() => document.addEventListener('mousedown', close), 0);
+    const done = () => { menu.remove(); document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc); };
+    const close = e => { if (!menu.contains(e.target)) done(); };
+    const esc = e => { if (e.key === 'Escape') { done(); anchor.focus(); } };
+    setTimeout(() => { document.addEventListener('mousedown', close); document.addEventListener('keydown', esc); }, 0);
+    menu.querySelector('button')?.focus();
   }
 
   const uniqueKey = (base, except) => {
@@ -249,15 +265,15 @@ export async function renderEditor(id, { mount, setCleanup }) {
     const qs = sch().perguntas;
     fill(listEl, 
       el('div', { class: 'list-sep', text: 'Início' }),
-      item('welcome', '👋', sch().boas_vindas.ativo ? plain(sch().boas_vindas.titulo) || 'Boas-vindas' : 'Boas-vindas (desativada)'),
-      el('div', { class: 'list-sep', text: `Perguntas (${qs.length})` }),
-      qs.map((q, i) => item(q.id, TIPOS[q.tipo].sigla, `${i + 1}. ${plain(q.rotulo) || 'Sem título'}`, { draggable: true, index: i, hook: sch().ajustes.webhook.ao_responder && sch().ajustes.webhook.pergunta === q.id, route: hasRouting(q) })),
-      el('button', { class: 'btn sm', style: 'width:100%;margin:8px 0', type: 'button', onclick: e => openAddMenu(e.currentTarget) }, '+ Adicionar pergunta'),
-      el('div', { class: 'list-sep', text: 'Fim' }),
-      item('envio', '↗', 'Envio e consentimento'),
-      item('final', '✓', 'Tela final e redirecionamento'),
-      item('pontuacao', '∑', 'Pontuação e resultados'),
-      item('encerrado', '⏱', 'Agenda e encerramento'));
+      item('welcome', 'flag', sch().boas_vindas.ativo ? plain(sch().boas_vindas.titulo) || 'Boas-vindas' : 'Boas-vindas (desligada)', { off: !sch().boas_vindas.ativo }),
+      el('div', { class: 'list-sep' }, 'Perguntas', el('span', { class: 'grow' }), el('span', { class: 'num', text: String(qs.length) })),
+      qs.map((q, i) => item(q.id, typeIcon(q.tipo), plain(q.rotulo) || 'Sem título', { n: String(i + 1), draggable: true, index: i, hook: sch().ajustes.webhook.ao_responder && sch().ajustes.webhook.pergunta === q.id, route: hasRouting(q) })),
+      el('button', { class: 'add-q', type: 'button', onclick: e => openAddMenu(e.currentTarget) }, icon('plus', 15), 'Adicionar pergunta'),
+      el('div', { class: 'list-sep', text: 'Final' }),
+      item('envio', 'send', 'Botão de envio'),
+      item('final', 'done', 'Tela de obrigado'),
+      item('pontuacao', 'sigma', 'Pontuação', { off: !sch().pontuacao?.ativo }),
+      item('encerrado', 'clock', 'Agenda'));
   }
 
   /* ----- panels ----- */
@@ -271,8 +287,8 @@ export async function renderEditor(id, { mount, setCleanup }) {
     else if (S.tab === 'ajustes') content = settingsPanel();
     else if (S.sel === 'welcome') content = welcomePanel();
     else if (S.sel === 'envio') content = envioPanel();
-    else if (S.sel === 'pontuacao') content = pontuacaoPanel();
     else if (S.sel === 'final') content = finalPanel();
+    else if (S.sel === 'pontuacao') content = pontuacaoPanel();
     else if (S.sel === 'encerrado') content = encerradoPanel();
     else {
       const i = sch().perguntas.findIndex(q => q.id === S.sel);
@@ -289,192 +305,200 @@ export async function renderEditor(id, { mount, setCleanup }) {
   function welcomePanel() {
     const w = sch().boas_vindas;
     return el('div', {},
-      el('h2', { text: 'Tela de boas-vindas', style: 'margin-bottom:16px' }),
-      toggle(w, 'ativo', 'Mostrar tela de boas-vindas', { rerender: true, onchange: refresh }),
-      w.ativo && el('div', {},
-        field('Etiqueta (opcional)', text(w, 'eyebrow', { placeholder: 'Ex.: Pesquisa · 2 minutos' })),
-        field('Título', text(w, 'titulo', { multiline: true, rows: 2, onchange: refresh }), TOKENS_HINT),
+      head('Boas-vindas', [icon('flag', 14), 'Início']),
+      toggle(w, 'ativo', 'Mostrar uma tela de abertura', { rerender: true, onchange: refresh }),
+      w.ativo && el('div', { style: 'margin-top:20px' },
+        field('Título', text(w, 'titulo', { multiline: true, rows: 2, onchange: refresh }), undefined, TOKENS_HINT),
         field('Texto', text(w, 'texto', { multiline: true, rows: 3 })),
-        field('Texto do botão', text(w, 'botao')),
-        field('Nota abaixo do botão (opcional)', text(w, 'nota', { placeholder: 'Ex.: leva menos de 2 minutos' }), 'Aparece entre colchetes, em fonte mono.')));
+        field('Botão', text(w, 'botao')),
+        more('Mais detalhes',
+          field('Etiqueta acima do título (opcional)', text(w, 'eyebrow', { placeholder: 'Ex.: Pesquisa · 2 minutos' })),
+          field('Nota abaixo do botão (opcional)', text(w, 'nota', { placeholder: 'Ex.: leva menos de 2 minutos' })))));
   }
 
   function envioPanel() {
     const e = sch().envio;
     return el('div', {},
-      el('h2', { text: 'Envio e consentimento', style: 'margin-bottom:6px' }),
-      el('p', { class: 'muted', style: 'margin:0 0 16px', text: sch().consentimento.ativo ? 'Esta tela aparece depois da última pergunta, com a caixa de consentimento.' : 'O consentimento está desativado: a última pergunta envia direto. Ative-o em Ajustes para mostrar esta tela. O texto do botão abaixo vale nos dois casos.' }),
+      head('Botão de envio', [icon('send', 14), 'Final']),
       sch().consentimento.ativo && el('div', {},
-        field('Título', text(e, 'titulo', { multiline: true, rows: 2 }), TOKENS_HINT),
+        el('p', { class: 'note', style: 'margin:0 0 20px' }, icon('info', 14), 'Com o consentimento (LGPD) ligado, uma tela pede a confirmação antes de enviar.'),
+        field('Título', text(e, 'titulo', { multiline: true, rows: 2 }), undefined, TOKENS_HINT),
         field('Texto', text(e, 'texto', { multiline: true, rows: 3 }))),
-      field('Texto do botão de envio', text(e, 'botao')));
+      field('Texto do botão', text(e, 'botao')),
+      !sch().consentimento.ativo && el('p', { class: 'hint', style: 'margin-top:4px' }, 'Quer pedir consentimento (LGPD)? Ligue em ', el('a', { href: '#', style: 'color:var(--accent);font-weight:550', onclick: ev => { ev.preventDefault(); S.tab = 'ajustes'; syncTabs(); } }, 'Ajustes'), '.'));
   }
 
   /* ----- matrix rows ----- */
   const LET = 'ABCDEFGHIJKL';
   function linesEditor(q) {
-  const holder = el('div');
-  const draw = focus => fill(holder,
-  q.linhas.map((txt, i) => {
-  const input = el('input', { class: 'input', value: txt, placeholder: `Afirmação ${i + 1}` });
-  input.addEventListener('input', () => { q.linhas[i] = input.value; touch(); });
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); q.linhas.splice(i + 1, 0, ''); draw(i + 1); touch(); } });
-  if (focus === i) setTimeout(() => input.focus(), 0);
-  return el('div', { class: 'opt-row' }, el('b', { class: 'mono', text: LET[i] || '', style: 'width:20px' }), input,
-  el('button', { class: 'icon-btn', type: 'button', title: 'Remover', onclick: () => { q.linhas.splice(i, 1); draw(); touch(); } }, '✕'));
-  }),
-  q.linhas.length < 12 && el('button', { class: 'btn sm', type: 'button', onclick: () => { q.linhas.push(''); draw(q.linhas.length - 1); touch(); } }, '+ Adicionar linha'));
-  draw();
-  return holder;
+    const holder = el('div');
+    const draw = focus => fill(holder,
+      q.linhas.map((txt, i) => {
+        const input = el('input', { class: 'input', value: txt, placeholder: `Afirmação ${i + 1}`, 'aria-label': `Linha ${LET[i]}` });
+        input.addEventListener('input', () => { q.linhas[i] = input.value; touch(); });
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); q.linhas.splice(i + 1, 0, ''); draw(i + 1); touch(); } });
+        if (focus === i) setTimeout(() => input.focus(), 0);
+        return el('div', { class: 'opt-row' }, el('span', { class: 'letter', text: LET[i] || '' }), input,
+          el('button', { class: 'icon-btn', type: 'button', title: 'Remover', 'aria-label': `Remover linha ${LET[i]}`, onclick: () => { q.linhas.splice(i, 1); draw(); touch(); } }, icon('x', 15)));
+      }),
+      q.linhas.length < 12 && el('button', { class: 'btn ghost sm', type: 'button', style: 'margin-left:24px', onclick: () => { q.linhas.push(''); draw(q.linhas.length - 1); touch(); } }, icon('plus', 14), 'Linha'));
+    draw();
+    return holder;
   }
 
   /* ----- scoring: variables, point rules and result screens ----- */
   const CMP_OPS = [['gte', '≥ maior ou igual a'], ['gt', '> maior que'], ['lte', '≤ menor ou igual a'], ['lt', '< menor que'], ['eq', '= igual a'], ['ne', '≠ diferente de']];
-  const rowStyle = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px';
   const rid = prefix => `${prefix}${Math.random().toString(16).slice(2, 10)}`;
 
   function pontuacaoPanel() {
-  const P = sch().pontuacao;
-  const holder = el('div');
-  const answerable = () => sch().perguntas.filter(q => q.tipo !== 'aviso');
-  const qLabel = q => `Pergunta ${sch().perguntas.indexOf(q) + 1} — ${plain(q.rotulo).slice(0, 40) || 'sem título'}`;
-  const pick = (value, options, onchange) => {
-  const node = el('select', { class: 'select', style: 'width:auto;max-width:100%' }, options.map(([v, l]) => el('option', { value: v, text: l })));
-  node.value = value;
-  node.addEventListener('change', () => { onchange(node.value); touch(); });
-  return node;
-  };
-  const varOptions = () => P.variaveis.map(v => [v.chave, v.nome || v.chave]);
-  const uniqueVar = base => { let k = base, n = 2; while (P.variaveis.some(v => v.chave === k)) k = `${base}_${n++}`; return k; };
+    const P = sch().pontuacao;
+    const holder = el('div');
+    const answerable = () => sch().perguntas.filter(q => q.tipo !== 'aviso');
+    const qLabel = q => `${sch().perguntas.indexOf(q) + 1}. ${plain(q.rotulo).slice(0, 40) || 'Sem título'}`;
+    const pick = (value, options, onchange, label) => {
+      const node = el('select', { class: 'select', 'aria-label': label }, options.map(([v, l]) => el('option', { value: v, text: l })));
+      node.value = value;
+      node.addEventListener('change', () => { onchange(node.value); touch(); });
+      return node;
+    };
+    const num = (value, oninput, label, placeholder) => {
+      const n = el('input', { class: 'input num-in', type: 'number', value: value ?? '', placeholder, 'aria-label': label });
+      n.addEventListener('input', () => { oninput(n.value); touch(); });
+      return n;
+    };
+    const del = (label, fn) => el('button', { class: 'icon-btn danger', type: 'button', title: label, 'aria-label': label, onclick: () => { fn(); touch(); draw(); } }, icon('x', 15));
+    const varOptions = () => P.variaveis.map(v => [v.chave, v.nome || v.chave]);
+    const uniqueVar = base => { let k = base, n = 2; while (P.variaveis.some(v => v.chave === k)) k = `${base}_${n++}`; return k; };
 
-  const dropVar = v => {
-  P.regras = P.regras.filter(r => r.variavel !== v.chave);
-  for (const res of P.resultados) res.condicoes = res.condicoes.filter(c => c.variavel !== v.chave && c.com !== `var:${v.chave}`);
-  P.variaveis = P.variaveis.filter(x => x !== v);
-  };
-  const renameVar = (v, next) => {
-  const old = v.chave;
-  v.chave = next;
-  for (const r of P.regras) if (r.variavel === old) r.variavel = next;
-  for (const res of P.resultados) for (const c of res.condicoes) { if (c.variavel === old) c.variavel = next; if (c.com === `var:${old}`) c.com = `var:${next}`; }
-  };
+    const dropVar = v => {
+      P.regras = P.regras.filter(r => r.variavel !== v.chave);
+      for (const res of P.resultados) res.condicoes = res.condicoes.filter(c => c.variavel !== v.chave && c.com !== `var:${v.chave}`);
+      P.variaveis = P.variaveis.filter(x => x !== v);
+    };
+    const renameVar = (v, next) => {
+      const old = v.chave;
+      v.chave = next;
+      for (const r of P.regras) if (r.variavel === old) r.variavel = next;
+      for (const res of P.resultados) for (const c of res.condicoes) { if (c.variavel === old) c.variavel = next; if (c.com === `var:${old}`) c.com = `var:${next}`; }
+    };
 
-  const variablesSection = () => el('div', { class: 'section' }, el('h3', { text: 'Variáveis (eixos de pontuação)' }),
-  el('p', { class: 'hint', style: 'margin-bottom:12px', text: 'Cada variável soma pontos conforme as respostas (ex.: oferta, tese, volume, vulcan). Em “marcar quando ≥” você define a pontuação mínima para gerar uma tag no webhook (deixe vazio para não marcar).' }),
-  P.variaveis.map(v => {
-  const nome = text(v, 'nome', { placeholder: 'Nome' });
-  nome.style.width = '170px';
-  const key = el('input', { class: 'input mono', value: v.chave, style: 'width:140px', 'aria-label': 'Chave da variável' });
-  key.addEventListener('change', () => {
-  const next = slugKey(key.value);
-  if (!next || P.variaveis.some(x => x !== v && x.chave === next)) { key.value = v.chave; return; }
-  renameVar(v, next); key.value = next; touch(); draw();
-  });
-  const corte = el('input', { class: 'input', type: 'number', value: v.corte ?? '', placeholder: 'sem tag', style: 'width:100px', 'aria-label': 'Marcar quando maior ou igual a' });
-  corte.addEventListener('input', () => { v.corte = corte.value === '' ? null : Number(corte.value); touch(); });
-  return el('div', { style: rowStyle }, nome, key, el('span', { class: 'muted', text: 'marcar quando ≥' }), corte,
-  el('button', { class: 'icon-btn', type: 'button', title: 'Remover variável (e as regras que a usam)', onclick: () => { dropVar(v); touch(); draw(); } }, '✕'));
-  }),
-  el('button', { class: 'btn sm', type: 'button', onclick: () => { P.variaveis.push({ id: rid('v'), chave: uniqueVar('variavel'), nome: 'Nova variável', corte: null }); touch(); draw(); } }, '+ Adicionar variável'));
+    const variablesSection = () => el('div', { class: 'section' },
+      el('h3', {}, 'Variáveis', tip('Cada variável soma pontos conforme as respostas (ex.: oferta, tese, volume). “Tag a partir de” gera uma tag no webhook quando a soma chega nesse valor; vazio não marca.')),
+      el('p', { class: 'hint', text: 'Os placares que as respostas vão somar.' }),
+      P.variaveis.length > 0 && el('div', { class: 'grid-head var-grid' }, el('span', { text: 'Nome' }), el('span', { text: 'Chave' }), el('span', { text: 'Tag a partir de' }), el('span')),
+      P.variaveis.map(v => {
+        const nome = text(v, 'nome', { placeholder: 'Nome' });
+        nome.setAttribute('aria-label', 'Nome da variável');
+        const key = el('input', { class: 'input mono', value: v.chave, 'aria-label': 'Chave da variável' });
+        key.addEventListener('change', () => {
+          const next = slugKey(key.value);
+          if (!next || P.variaveis.some(x => x !== v && x.chave === next)) { key.value = v.chave; return; }
+          renameVar(v, next); key.value = next; touch(); draw();
+        });
+        return el('div', { class: 'var-grid' }, nome, key, num(v.corte, val => { v.corte = val === '' ? null : Number(val); }, 'Tag a partir de', 'sem tag'), del('Remover variável (e as regras que a usam)', () => dropVar(v)));
+      }),
+      el('button', { class: 'btn sm', type: 'button', onclick: () => { P.variaveis.push({ id: rid('v'), chave: uniqueVar('variavel'), nome: 'Nova variável', corte: null }); touch(); draw(); } }, icon('plus', 14), 'Variável'));
 
-  const ruleRow = (r, ri) => {
-  const q = sch().perguntas.find(x => x.id === r.pergunta) || answerable()[0];
-  const isMx = q?.tipo === 'matriz';
-  const ops = isMx ? OPS.choice : q ? opsFor(q) : OPS.text;
-  if (!ops.some(([v]) => v === r.op)) r.op = ops[0][0];
-  if (isMx && !r.linha) r.linha = 'A';
-  if (!isMx) r.linha = '';
-  const values = q ? valuesFor(q) : null;
-  let valueEl;
-  if (values) valueEl = pick(r.valor, [['', 'Escolha…'], ...values.map(v => [v, q.tipo === 'escala' ? faceFor(q, Number(v)) : v])], val => { r.valor = val; });
-  else {
-  valueEl = el('input', { class: 'input', value: r.valor, placeholder: 'Valor', style: 'width:140px' });
-  valueEl.addEventListener('input', () => { r.valor = valueEl.value; touch(); });
-  }
-  const pts = el('input', { class: 'input', type: 'number', value: r.pontos, style: 'width:76px', 'aria-label': 'Pontos' });
-  pts.addEventListener('input', () => { r.pontos = Number(pts.value) || 0; touch(); });
-  return el('div', { style: rowStyle },
-  el('span', { class: 'cond-and', text: 'Se' }),
-  pick(q?.id || '', answerable().map(o => [o.id, qLabel(o)]), val => { r.pergunta = val; r.valor = ''; r.linha = ''; r.op = 'igual'; draw(); }),
-  isMx && pick(r.linha, (q.linhas || []).map((t, i) => [LET[i], `${LET[i]}. ${String(t).slice(0, 28)}`]), val => { r.linha = val; }),
-  pick(r.op, ops, val => { r.op = val; }),
-  valueEl,
-  el('span', { class: 'muted', text: '→ soma' }), pts,
-  pick(r.variavel, varOptions(), val => { r.variavel = val; }),
-  el('button', { class: 'icon-btn', type: 'button', title: 'Remover regra', onclick: () => { P.regras.splice(ri, 1); touch(); draw(); } }, '✕'));
-  };
+    const ruleRow = (r, ri) => {
+      const q = sch().perguntas.find(x => x.id === r.pergunta) || answerable()[0];
+      const isMx = q?.tipo === 'matriz';
+      const ops = isMx ? OPS.choice : q ? opsFor(q) : OPS.text;
+      if (!ops.some(([v]) => v === r.op)) r.op = ops[0][0];
+      if (isMx && !r.linha) r.linha = 'A';
+      if (!isMx) r.linha = '';
+      const values = q ? valuesFor(q) : null;
+      let valueEl;
+      if (values) valueEl = pick(r.valor, [['', 'Escolha…'], ...values.map(v => [v, q.tipo === 'escala' ? faceFor(q, Number(v)) : v])], val => { r.valor = val; }, 'Resposta');
+      else {
+        valueEl = el('input', { class: 'input', value: r.valor, placeholder: 'Valor', 'aria-label': 'Resposta' });
+        valueEl.addEventListener('input', () => { r.valor = valueEl.value; touch(); });
+      }
+      return el('div', { class: 'rule' },
+        el('div', { class: 'pt-row' }, el('span', { class: 'cond-and', text: 'Se' }),
+          pick(q?.id || '', answerable().map(o => [o.id, qLabel(o)]), val => { r.pergunta = val; r.valor = ''; r.linha = ''; r.op = 'igual'; draw(); }, 'Pergunta'),
+          del('Remover regra', () => P.regras.splice(ri, 1))),
+        el('div', { class: 'pt-row' }, el('span'),
+          isMx && pick(r.linha, (q.linhas || []).map((t, i) => [LET[i], `${LET[i]}. ${String(t).slice(0, 28)}`]), val => { r.linha = val; }, 'Linha'),
+          pick(r.op, ops, val => { r.op = val; }, 'Comparação'), valueEl),
+        el('div', { class: 'pt-row' }, el('span', { class: 'cond-and', text: 'Soma' }),
+          num(r.pontos, val => { r.pontos = Number(val) || 0; }, 'Pontos'),
+          el('span', { class: 'muted', text: 'em' }),
+          pick(r.variavel, varOptions(), val => { r.variavel = val; }, 'Variável')));
+    };
 
-  const rulesSection = () => el('div', { class: 'section' }, el('h3', { text: 'Regras de pontos' }),
-  el('p', { class: 'hint', style: 'margin-bottom:12px', text: 'Quando a resposta combina, os pontos são somados à variável. Uma mesma resposta pode pontuar em mais de uma variável (crie uma regra para cada). Em matrizes, escolha também a linha.' }),
-  answerable().length === 0 && el('p', { class: 'notice', text: 'Crie perguntas antes de montar regras.' }),
-  P.regras.map(ruleRow),
-  el('button', {
-  class: 'btn sm', type: 'button', disabled: !answerable().length || !P.variaveis.length,
-  onclick: () => { P.regras.push({ id: rid('p'), variavel: P.variaveis[0].chave, pergunta: answerable()[0].id, linha: '', op: 'igual', valor: '', pontos: 1 }); touch(); draw(); }
-  }, '+ Adicionar regra'));
+    const rulesSection = () => el('div', { class: 'section' },
+      el('h3', {}, 'Regras de pontos', tip('Quando a resposta combina, os pontos vão para a variável. Uma resposta pode pontuar em várias variáveis: crie uma regra para cada. Em matrizes, escolha também a linha.')),
+      el('p', { class: 'hint', text: 'Qual resposta vale quantos pontos.' }),
+      answerable().length === 0 && el('p', { class: 'notice', text: 'Crie perguntas antes de montar regras.' }),
+      !P.variaveis.length && el('p', { class: 'note' }, icon('info', 14), 'Crie uma variável primeiro.'),
+      P.regras.map(ruleRow),
+      el('button', {
+        class: 'btn sm', type: 'button', disabled: !answerable().length || !P.variaveis.length,
+        onclick: () => { P.regras.push({ id: rid('p'), variavel: P.variaveis[0].chave, pergunta: answerable()[0].id, linha: '', op: 'igual', valor: '', pontos: 1 }); touch(); draw(); }
+      }, icon('plus', 14), 'Regra'));
 
-  const resCard = (res, ri) => {
-  const move = d => { const j = ri + d; if (j < 0 || j >= P.resultados.length) return; [P.resultados[ri], P.resultados[j]] = [P.resultados[j], P.resultados[ri]]; touch(); draw(); };
-  const refOptions = () => [...P.variaveis.map(v => [`var:${v.chave}`, `a variável ${v.nome || v.chave}`]), ['num', 'um número']];
-  const cond = (c, ci) => {
-  const isNum = c.com.startsWith('num:');
-  const n = el('input', { class: 'input', type: 'number', value: Number(c.com.slice(4)) || 0, style: 'width:76px', 'aria-label': 'Número' });
-  n.addEventListener('input', () => { c.com = `num:${Number(n.value) || 0}`; touch(); });
-  return el('div', { style: rowStyle },
-  el('span', { class: 'cond-and', text: ci === 0 ? 'Se' : 'e' }),
-  pick(c.variavel, varOptions(), val => { c.variavel = val; }),
-  pick(c.op, CMP_OPS, val => { c.op = val; }),
-  pick(isNum ? 'num' : c.com, refOptions(), val => { c.com = val === 'num' ? 'num:0' : val; draw(); }),
-  isNum && n,
-  el('button', { class: 'icon-btn', type: 'button', title: 'Remover condição', onclick: () => { res.condicoes.splice(ci, 1); touch(); draw(); } }, '✕'));
-  };
-  return el('div', { class: 'rule' },
-  el('div', { class: 'row', style: 'margin-bottom:10px' }, el('b', { text: `Resultado ${ri + 1}` }), el('div', { class: 'grow' }),
-  el('button', { class: 'btn sm', type: 'button', onclick: () => { S.resIdx = ri; sendPreview(); } }, 'Ver na pré-visualização'),
-  el('button', { class: 'icon-btn', type: 'button', title: 'Subir', disabled: ri === 0, onclick: () => move(-1) }, '↑'),
-  el('button', { class: 'icon-btn', type: 'button', title: 'Descer', disabled: ri === P.resultados.length - 1, onclick: () => move(1) }, '↓'),
-  el('button', { class: 'icon-btn', type: 'button', title: 'Excluir resultado', onclick: () => { P.resultados.splice(ri, 1); touch(); draw(); } }, '🗑')),
-  el('div', { class: 'cols2' }, field('Nome (só para você)', text(res, 'nome', { placeholder: 'Ex.: Oferta' })), field('Chave (vai no webhook)', text(res, 'chave', { placeholder: 'oferta' }))),
-  el('div', { class: 'field' }, el('label', { text: 'Quando mostrar' }),
-  res.condicoes.length ? res.condicoes.map(cond) : el('p', { class: 'hint', text: 'Sem condições: aparece para quem não combinou com os resultados acima (padrão).' }),
-  el('button', {
-  class: 'btn sm', type: 'button', style: 'margin-top:4px', disabled: !P.variaveis.length,
-  onclick: () => { res.condicoes.push({ variavel: P.variaveis[0].chave, op: 'gte', com: P.variaveis[1] ? `var:${P.variaveis[1].chave}` : 'num:0' }); touch(); draw(); }
-  }, '+ Adicionar condição')),
-  field('Título', text(res, 'titulo', { multiline: true, rows: 2 }), TOKENS_HINT),
-  field('Texto', text(res, 'texto', { multiline: true, rows: 7 }), 'Cada linha vira um parágrafo. Aceita {primeiro_nome}, {area} e outras chaves; {chave|min} deixa a primeira letra minúscula.'),
-  field('Produto (linha em destaque, opcional)', text(res, 'produto', { placeholder: 'Ex.: Lit Start, Primeira Venda em 7 Dias' })),
-  el('div', { class: 'cols2' },
-  field('Botão: texto', text(res, 'botao_texto', { placeholder: 'Ex.: Quero transformar o que eu faço em oferta' })),
-  field('Botão: link', text(res, 'botao_url', { placeholder: 'https://…', type: 'url' }), 'O botão só aparece quando há link.')));
-  };
+    const resCard = (res, ri) => {
+      const move = d => { const j = ri + d; if (j < 0 || j >= P.resultados.length) return; [P.resultados[ri], P.resultados[j]] = [P.resultados[j], P.resultados[ri]]; touch(); draw(); };
+      const refOptions = () => [...P.variaveis.map(v => [`var:${v.chave}`, v.nome || v.chave]), ['num', 'um número']];
+      const cond = (c, ci) => {
+        const isNum = c.com.startsWith('num:');
+        return el('div', { class: 'pt-row' },
+          el('span', { class: 'cond-and', text: ci === 0 ? 'Se' : 'e' }),
+          pick(c.variavel, varOptions(), val => { c.variavel = val; }, 'Variável'),
+          pick(c.op, CMP_OPS, val => { c.op = val; }, 'Comparação'),
+          pick(isNum ? 'num' : c.com, refOptions(), val => { c.com = val === 'num' ? 'num:0' : val; draw(); }, 'Comparar com'),
+          isNum && num(Number(c.com.slice(4)) || 0, val => { c.com = `num:${Number(val) || 0}`; }, 'Número'),
+          del('Remover condição', () => res.condicoes.splice(ci, 1)));
+      };
+      const nameInput = text(res, 'nome', { placeholder: `Resultado ${ri + 1}` });
+      nameInput.setAttribute('aria-label', 'Nome do resultado (só para você)');
+      return el('div', { class: 'rule' },
+        el('div', { class: 'rule-head' }, nameInput,
+          el('button', { class: 'icon-btn', type: 'button', title: 'Ver na prévia', 'aria-label': 'Ver na prévia', onclick: () => { S.resIdx = ri; sendPreview(); } }, icon('eye', 15)),
+          el('button', { class: 'icon-btn', type: 'button', title: 'Subir', 'aria-label': 'Subir', disabled: ri === 0, onclick: () => move(-1) }, icon('up', 15)),
+          el('button', { class: 'icon-btn', type: 'button', title: 'Descer', 'aria-label': 'Descer', disabled: ri === P.resultados.length - 1, onclick: () => move(1) }, icon('down', 15)),
+          el('button', { class: 'icon-btn danger', type: 'button', title: 'Excluir resultado', 'aria-label': 'Excluir resultado', onclick: () => { P.resultados.splice(ri, 1); touch(); draw(); } }, icon('trash', 15))),
+        el('div', { class: 'field' }, el('label', { text: 'Quando mostrar' }),
+          res.condicoes.length ? res.condicoes.map(cond) : el('p', { class: 'note', style: 'margin:0' }, icon('info', 14), 'Sem condições: vale para quem não combinou com os de cima.'),
+          el('button', {
+            class: 'btn ghost sm', type: 'button', style: 'align-self:flex-start', disabled: !P.variaveis.length,
+            onclick: () => { res.condicoes.push({ variavel: P.variaveis[0].chave, op: 'gte', com: P.variaveis[1] ? `var:${P.variaveis[1].chave}` : 'num:0' }); touch(); draw(); }
+          }, icon('plus', 14), 'Condição')),
+        field('Título', text(res, 'titulo', { multiline: true, rows: 2 }), undefined, TOKENS_HINT),
+        field('Texto', text(res, 'texto', { multiline: true, rows: 6 }), undefined, 'Cada linha vira um parágrafo. Aceita {primeiro_nome} e outras chaves; {chave|min} deixa a primeira letra minúscula.'),
+        el('div', { class: 'cols2' },
+          field('Botão (opcional)', text(res, 'botao_texto', { placeholder: 'Ex.: Quero começar' })),
+          field('Link do botão', text(res, 'botao_url', { placeholder: 'https://…', type: 'url' }), undefined, 'O botão só aparece quando há link.')),
+        more('Mais detalhes',
+          field('Produto em destaque (opcional)', text(res, 'produto', { placeholder: 'Ex.: Primeira Venda em 7 Dias' })),
+          field('Chave', text(res, 'chave', { placeholder: 'oferta' }), undefined, 'Identifica este resultado no webhook de conclusão.')));
+    };
 
-  const resultsSection = () => el('div', { class: 'section' }, el('h3', { text: 'Resultados (conteúdo da tela final por pontuação)' }),
-  el('p', { class: 'hint', style: 'margin-bottom:12px', text: 'Depois de enviar, a pessoa vê a abertura da tela final (em “Tela final e redirecionamento”) e, logo abaixo, o primeiro resultado desta lista, de cima para baixo, cujas condições combinem. Deixe o último sem condições: ele vale como padrão e também como desempate.' }),
-  P.resultados.map(resCard),
-  el('button', { class: 'btn sm', type: 'button', onclick: () => { P.resultados.push({ id: rid('r'), nome: '', chave: '', condicoes: [], titulo: '', texto: '', produto: '', botao_texto: '', botao_url: '' }); touch(); draw(); } }, '+ Adicionar resultado'));
+    const resultsSection = () => el('div', { class: 'section' },
+      el('h3', {}, 'Resultados', tip('Depois do envio, a pessoa vê a tela de obrigado e, logo abaixo, o primeiro resultado desta lista (de cima para baixo) cujas condições combinem. Deixe o último sem condições: ele vale como padrão e desempate.')),
+      el('p', { class: 'hint', text: 'Um texto para cada perfil, mostrado no fim.' }),
+      P.resultados.map(resCard),
+      el('button', { class: 'btn sm', type: 'button', onclick: () => { P.resultados.push({ id: rid('r'), nome: '', chave: '', condicoes: [], titulo: '', texto: '', produto: '', botao_texto: '', botao_url: '' }); touch(); draw(); } }, icon('plus', 14), 'Resultado'));
 
-  const draw = () => fill(holder,
-  el('h2', { text: 'Pontuação e resultados', style: 'margin-bottom:6px' }),
-  el('p', { class: 'muted', style: 'margin:0 0 16px', text: 'Some pontos em variáveis conforme as respostas e mostre uma tela de resultado diferente para cada perfil. Os pontos, as tags e a chave do resultado também vão no webhook de conclusão.' }),
-  toggle(P, 'ativo', 'Ativar pontuação e resultado por pontuação', { rerender: true }),
-  P.ativo && el('div', {}, variablesSection(), rulesSection(), resultsSection()));
-  draw();
-  return holder;
+    const draw = () => fill(holder,
+      head('Pontuação', [icon('sigma', 14), 'Final']),
+      toggle(P, 'ativo', 'Somar pontos e mostrar um resultado por perfil', { rerender: true, help: 'Os pontos, as tags e a chave do resultado também vão no webhook de conclusão.' }),
+      P.ativo && el('div', { style: 'margin-top:20px' }, variablesSection(), rulesSection(), resultsSection()));
+    draw();
+    return holder;
   }
 
   function finalPanel() {
     const f = sch().final;
     return el('div', {},
-      el('h2', { text: 'Tela final e redirecionamento', style: 'margin-bottom:16px' }),
-      el('div', { class: 'section' }, el('h3', { text: 'Página de obrigado' }),
-        el('p', { class: 'hint', style: 'margin-bottom:12px', text: 'É o que a pessoa vê depois de enviar. Se o redirecionamento estiver desligado (ou nenhuma regra combinar), ela fica aqui.' }),
-        field('Etiqueta (opcional)', text(f, 'etiqueta', { placeholder: 'Ex.: STATUS: INSCRIÇÃO RECEBIDA' })),
-        field('Título', text(f, 'titulo', { multiline: true, rows: 2 }), TOKENS_HINT),
+      head('Tela de obrigado', [icon('done', 14), 'Final']),
+      el('div', { class: 'section' },
+        field('Título', text(f, 'titulo', { multiline: true, rows: 2 }), undefined, TOKENS_HINT),
         field('Texto', text(f, 'texto', { multiline: true, rows: 3 })),
         el('div', { class: 'cols2' },
-          field('Botão (opcional): texto', text(f, 'cta_texto', { placeholder: 'Ex.: Entrar no grupo' })),
-          field('Botão: link', text(f, 'cta_url', { placeholder: 'https://…', type: 'url' })))),
+          field('Botão (opcional)', text(f, 'cta_texto', { placeholder: 'Ex.: Entrar no grupo' })),
+          field('Link do botão', text(f, 'cta_url', { placeholder: 'https://…', type: 'url' }))),
+        more('Mais detalhes', field('Etiqueta acima do título (opcional)', text(f, 'etiqueta', { placeholder: 'Ex.: Inscrição recebida' })))),
       redirectSection());
   }
 
@@ -498,7 +522,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
 
     const conditionRow = (rule, c, ci) => {
       const q = sch().perguntas.find(x => x.id === c.pergunta);
-      const qSel = el('select', { class: 'select' }, answerable().map(({ q: o, i }) => el('option', { value: o.id, text: `Pergunta ${i + 1} — ${plain(o.rotulo).slice(0, 40) || 'sem título'}` })));
+      const qSel = el('select', { class: 'select', 'aria-label': 'Pergunta' }, answerable().map(({ q: o, i }) => el('option', { value: o.id, text: `${i + 1}. ${plain(o.rotulo).slice(0, 40) || 'Sem título'}` })));
       qSel.value = c.pergunta;
       qSel.addEventListener('change', () => {
         const nq = sch().perguntas.find(x => x.id === qSel.value);
@@ -520,36 +544,35 @@ export async function renderEditor(id, { mount, setCleanup }) {
       }
       return el('div', { class: 'cond-row' },
         el('span', { class: 'cond-and', text: ci === 0 ? 'Se' : 'e' }), qSel, opSel, valueEl,
-        el('button', { class: 'icon-btn', type: 'button', title: 'Remover condição', onclick: () => { rule.condicoes.splice(ci, 1); touch(); draw(); } }, '✕'));
+        el('button', { class: 'icon-btn', type: 'button', title: 'Remover condição', 'aria-label': 'Remover condição', onclick: () => { rule.condicoes.splice(ci, 1); touch(); draw(); } }, icon('x', 15)));
     };
 
     const ruleCard = (rule, ri) => {
       const move = d => { const j = ri + d; if (j < 0 || j >= r.regras.length) return; [r.regras[ri], r.regras[j]] = [r.regras[j], r.regras[ri]]; touch(); draw(); };
-      const nameInput = text(rule, 'nome', { placeholder: `Regra ${ri + 1} (nome opcional)` });
+      const nameInput = text(rule, 'nome', { placeholder: `Regra ${ri + 1}` });
+      nameInput.setAttribute('aria-label', 'Nome da regra');
       return el('div', { class: 'rule' },
-        el('div', { class: 'row', style: 'margin-bottom:10px' }, el('b', { text: `Regra ${ri + 1}` }), el('div', { class: 'grow' }),
-          el('button', { class: 'icon-btn', type: 'button', title: 'Subir', disabled: ri === 0, onclick: () => move(-1) }, '↑'),
-          el('button', { class: 'icon-btn', type: 'button', title: 'Descer', disabled: ri === r.regras.length - 1, onclick: () => move(1) }, '↓'),
-          el('button', { class: 'icon-btn', type: 'button', title: 'Excluir regra', onclick: () => { r.regras.splice(ri, 1); touch(); draw(); } }, '🗑')),
-        field(null, nameInput),
+        el('div', { class: 'rule-head' }, nameInput,
+          el('button', { class: 'icon-btn', type: 'button', title: 'Subir', 'aria-label': 'Subir regra', disabled: ri === 0, onclick: () => move(-1) }, icon('up', 15)),
+          el('button', { class: 'icon-btn', type: 'button', title: 'Descer', 'aria-label': 'Descer regra', disabled: ri === r.regras.length - 1, onclick: () => move(1) }, icon('down', 15)),
+          el('button', { class: 'icon-btn danger', type: 'button', title: 'Excluir regra', 'aria-label': 'Excluir regra', onclick: () => { r.regras.splice(ri, 1); touch(); draw(); } }, icon('trash', 15))),
         rule.condicoes.map((c, ci) => conditionRow(rule, c, ci)),
-        el('button', { class: 'btn sm', type: 'button', style: 'margin:4px 0 12px', onclick: () => { rule.condicoes.push({ pergunta: answerable()[0].q.id, op: 'igual', valor: '' }); touch(); draw(); } }, '+ Adicionar condição (e)'),
-        field('Então redirecionar para', text(rule, 'url', { placeholder: 'https://…', type: 'url' }), 'Pode levar respostas na URL com {chave} (ex.: …?email={email}) e o código da resposta com {resposta_id}.'));
+        el('button', { class: 'btn ghost sm', type: 'button', style: 'margin:0 0 12px 30px', onclick: () => { rule.condicoes.push({ pergunta: answerable()[0].q.id, op: 'igual', valor: '' }); touch(); draw(); } }, icon('plus', 14), 'Condição'),
+        field('Enviar para', text(rule, 'url', { placeholder: 'https://…', type: 'url' }), undefined, 'Dá para levar respostas no link: …?email={email}. {resposta_id} leva o código da resposta.'));
     };
 
     const draw = () => {
-      fill(holder, el('h3', { text: 'Redirecionamento condicional' }),
-        el('p', { class: 'hint', style: 'margin-bottom:12px', text: 'Desligado: a pessoa fica só na página de obrigado. Ligado: ao enviar, ela vai para a URL da primeira regra (de cima para baixo) cujas condições combinem todas. Se nenhuma combinar, vai para a URL padrão, se houver; senão, vê a página de obrigado.' }),
-        toggle(r, 'ativo', 'Redirecionar conforme as respostas', { rerender: false, onchange: () => { touch(); draw(); } }),
-        r.ativo && el('div', {},
+      fill(holder, el('h3', {}, 'Levar para outra página', tip('Depois do envio, a pessoa vai para um link conforme as respostas. As regras são testadas em ordem; vale a primeira que combinar.')),
+        el('p', { class: 'hint', text: 'Em vez da tela de obrigado, abre um link.' }),
+        toggle(r, 'ativo', 'Redirecionar depois do envio', { rerender: false, onchange: () => { touch(); draw(); } }),
+        r.ativo && el('div', { style: 'margin-top:16px' },
           answerable().length === 0 && el('p', { class: 'notice', text: 'Crie perguntas antes de montar regras.' }),
           r.regras.map(ruleCard),
           el('button', {
-            class: 'btn sm', type: 'button', disabled: answerable().length === 0, style: 'margin-bottom:14px',
+            class: 'btn sm', type: 'button', disabled: answerable().length === 0, style: 'margin-bottom:20px',
             onclick: () => { r.regras.push({ id: `r${Math.random().toString(16).slice(2, 10)}`, nome: '', condicoes: [{ pergunta: answerable()[0].q.id, op: 'igual', valor: '' }], url: '' }); touch(); draw(); }
-          }, '+ Adicionar regra'),
-          field('URL padrão (quando nenhuma regra combinar)', text(r, 'url_padrao', { placeholder: 'Opcional — vazio mostra a página de obrigado', type: 'url' })),
-          el('p', { class: 'hint', text: 'Na pré-visualização, o envio mostra para onde a pessoa seria levada sem sair da página.' })));
+          }, icon('plus', 14), 'Nova regra'),
+          field(r.regras.length ? 'Se nenhuma regra combinar (opcional)' : 'Link (opcional)', text(r, 'url_padrao', { placeholder: 'Vazio: mostra a tela de obrigado', type: 'url' }))));
     };
     draw();
     return holder;
@@ -564,34 +587,34 @@ export async function renderEditor(id, { mount, setCleanup }) {
   function encerradoPanel() {
     const ag = sch().agenda, en = sch().encerrado, eb = sch().em_breve;
     const st = estado();
-    const stateText = { rascunho: ['Rascunho — publique para a agenda valer.', ''], aberto: ['Aberto, recebendo respostas.', 'ok'], em_breve: ['Agendado: ainda não abriu.', 'warn'], encerrado: ['Encerrado: não recebe respostas.', 'err'] }[st];
+    const stateText = { rascunho: ['Rascunho: publique para a agenda valer', ''], aberto: ['Recebendo respostas', 'ok'], em_breve: ['Ainda não abriu', 'warn'], encerrado: ['Encerrado', 'err'] }[st];
     const dateField = (label, key, hint) => {
       const input = el('input', { class: 'input', type: 'datetime-local', value: toLocalInput(ag[key]) });
       input.addEventListener('change', () => { ag[key] = input.value ? new Date(input.value).toISOString() : ''; touch(); renderPanel(); });
-      return field(label, el('div', { class: 'row' }, input, ag[key] && el('button', { class: 'btn ghost sm', type: 'button', onclick: () => { ag[key] = ''; touch(); renderPanel(); } }, 'Limpar')), hint);
+      return field(label, el('div', { class: 'row' }, input, ag[key] && el('button', { class: 'icon-btn', type: 'button', title: 'Limpar', 'aria-label': 'Limpar data', onclick: () => { ag[key] = ''; touch(); renderPanel(); } }, icon('x', 15))), hint);
     };
     const sub = (k, label) => el('button', { class: 'tab', role: 'tab', 'aria-selected': String(S.previewSub === k), onclick: () => { S.previewSub = k; renderPanel(); sendPreview(); } }, label);
     return el('div', {},
-      el('h2', { text: 'Agenda e encerramento', style: 'margin-bottom:6px' }),
-      el('p', { class: 'row', style: 'margin:0 0 16px' }, el('span', { class: `pill ${stateText[1]}`, text: stateText[0] })),
-      el('div', { class: 'section' }, el('h3', { text: 'Agenda' }),
-        el('p', { class: 'hint', style: 'margin-bottom:12px', text: `Horários no fuso do seu navegador (${Intl.DateTimeFormat().resolvedOptions().timeZone}). Fora do período, a pessoa vê as telas abaixo. Quem já estava preenchendo quando o encerramento chega tem 10 minutos para terminar. Vale para formulários publicados.` }),
+      head('Agenda', [icon('clock', 14), 'Final'], statusPill(st === 'aberto' ? 'aberto' : st)),
+      el('div', { class: 'section' }, el('h3', {}, 'Abrir e encerrar', tip('Horário do seu computador. Quem já estiver respondendo ganha 10 minutos para terminar depois do encerramento.')),
+        el('p', { class: 'hint', text: stateText[0] + '.' }),
         el('div', { class: 'cols2' },
-          dateField('Abre em', 'abre_em', 'Opcional. Antes disso aparece a tela “em breve”.'),
-          dateField('Encerra em', 'fecha_em', 'Opcional. Depois disso aparece a tela de encerrado.')),
+          dateField('Abre em (opcional)', 'abre_em'),
+          dateField('Encerra em (opcional)', 'fecha_em')),
         S.status !== 'draft' && el('div', { class: 'row' },
           S.status === 'closed'
-            ? el('button', { class: 'btn sm', type: 'button', onclick: reopen }, 'Reabrir agora')
-            : el('button', { class: 'btn sm danger', type: 'button', onclick: closeNow }, 'Encerrar agora'))),
-      el('div', { class: 'tabs', style: 'margin-bottom:14px;width:fit-content' }, sub('closed', 'Tela de encerrado'), sub('soon', 'Tela “em breve”')),
-      S.previewSub === 'closed'
-        ? el('div', { class: 'section' }, el('h3', { text: 'Tela de encerrado' }),
-          field('Título', text(en, 'titulo', { multiline: true, rows: 2 })),
-          field('Texto', text(en, 'texto', { multiline: true, rows: 3 })),
-          el('div', { class: 'cols2' }, field('Botão (opcional): texto', text(en, 'cta_texto', { placeholder: 'Ex.: Entrar na lista de espera' })), field('Botão: link', text(en, 'cta_url', { placeholder: 'https://…', type: 'url' }))))
-        : el('div', { class: 'section' }, el('h3', { text: 'Tela “em breve”' }),
-          field('Título', text(eb, 'titulo', { multiline: true, rows: 2 })),
-          field('Texto', text(eb, 'texto', { multiline: true, rows: 3 }), 'A data de abertura aparece sozinha abaixo do texto, se houver agenda.')));
+            ? el('button', { class: 'btn sm', type: 'button', onclick: reopen }, icon('play', 14), 'Reabrir agora')
+            : el('button', { class: 'btn sm danger', type: 'button', onclick: closeNow }, icon('stop', 14), 'Encerrar agora'))),
+      el('div', { class: 'section' },
+        el('div', { class: 'tabs', role: 'tablist', style: 'margin-bottom:18px' }, sub('closed', 'Tela de encerrado'), sub('soon', 'Tela “em breve”')),
+        S.previewSub === 'closed'
+          ? el('div', {},
+            field('Título', text(en, 'titulo', { multiline: true, rows: 2 })),
+            field('Texto', text(en, 'texto', { multiline: true, rows: 3 })),
+            el('div', { class: 'cols2' }, field('Botão (opcional)', text(en, 'cta_texto', { placeholder: 'Ex.: Lista de espera' })), field('Link do botão', text(en, 'cta_url', { placeholder: 'https://…', type: 'url' }))))
+          : el('div', {},
+            field('Título', text(eb, 'titulo', { multiline: true, rows: 2 })),
+            field('Texto', text(eb, 'texto', { multiline: true, rows: 3 }), undefined, 'Se houver data de abertura, ela aparece sozinha abaixo do texto.'))));
   }
 
   function optionsEditor(q, onChange) {
@@ -599,7 +622,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
     const draw = (focusIndex) => {
       fill(holder, 
         ...q.opcoes.map((opt, i) => {
-          const input = el('input', { class: 'input', value: opt, placeholder: `Opção ${i + 1}` });
+          const input = el('input', { class: 'input', value: opt, placeholder: `Opção ${i + 1}`, 'aria-label': `Opção ${i + 1}` });
           input.addEventListener('input', () => {
             const old = q.opcoes[i];
             q.opcoes[i] = input.value;
@@ -610,17 +633,17 @@ export async function renderEditor(id, { mount, setCleanup }) {
             touch(); onChange?.();
           });
           input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); q.opcoes.splice(i + 1, 0, ''); draw(i + 1); touch(); } });
-          const excl = q.tipo === 'multipla' && el('label', { title: 'Ao marcar esta opção, as demais são desmarcadas (ex.: “Nenhum”)' },
+          const excl = q.tipo === 'multipla' && el('label', { title: 'Marcar esta desmarca as outras (ex.: “Nenhuma”)' },
             el('input', { type: 'checkbox', checked: q.exclusivas.includes(opt), onchange: e => {
               q.exclusivas = e.target.checked ? [...q.exclusivas, q.opcoes[i]] : q.exclusivas.filter(x => x !== q.opcoes[i]);
               touch();
-            } }), 'exclusiva');
-          const row = el('div', { class: 'opt-row' }, input, excl,
-            el('button', { class: 'icon-btn', type: 'button', title: 'Remover', onclick: () => { delete q.ramos[q.opcoes[i]]; q.opcoes.splice(i, 1); draw(); touch(); onChange?.(); } }, '✕'));
+            } }), 'sozinha');
+          const row = el('div', { class: 'opt-row' }, q.tipo !== 'dropdown' && el('span', { class: `dot${q.tipo === 'multipla' ? ' sq' : ''}`, 'aria-hidden': 'true' }), input, excl,
+            el('button', { class: 'icon-btn', type: 'button', title: 'Remover', 'aria-label': `Remover opção ${i + 1}`, onclick: () => { delete q.ramos[q.opcoes[i]]; q.opcoes.splice(i, 1); draw(); touch(); onChange?.(); } }, icon('x', 15)));
           if (focusIndex === i) setTimeout(() => input.focus(), 0);
           return row;
         }),
-        el('button', { class: 'btn sm', type: 'button', onclick: () => { q.opcoes.push(''); draw(q.opcoes.length - 1); touch(); } }, '+ Adicionar opção'));
+        el('button', { class: 'btn ghost sm', type: 'button', style: 'margin-left:14px', onclick: () => { q.opcoes.push(''); draw(q.opcoes.length - 1); touch(); } }, icon('plus', 14), 'Opção'));
     };
     draw();
     return holder;
@@ -629,25 +652,24 @@ export async function renderEditor(id, { mount, setCleanup }) {
   // Branching: where the respondent goes after this question. Destinations can only be later questions, so routes never loop.
   function routingSection(q, i) {
     const qs = sch().perguntas;
-    const destOptions = defaultLabel => [['', defaultLabel], ...qs.slice(i + 1).map((o, k) => [o.id, `Pergunta ${i + k + 2} — ${plain(o.rotulo).slice(0, 48) || 'sem título'}`]), ['fim', 'Finalizar (ir direto para o envio)']];
+    const destOptions = defaultLabel => [['', defaultLabel], ...qs.slice(i + 1).map((o, k) => [o.id, `${i + k + 2}. ${plain(o.rotulo).slice(0, 48) || 'Sem título'}`]), ['fim', 'Ir para o envio (fim)']];
     const destSelect = (obj, key, defaultLabel) => {
       const opts = destOptions(defaultLabel);
       const bad = obj[key] && !opts.some(([v]) => v === obj[key]);
-      if (bad) opts.push([obj[key], `⚠ destino inválido (pergunta ${qs.findIndex(x => x.id === obj[key]) + 1} vem antes)`]);
+      if (bad) opts.push([obj[key], `Destino inválido: a pergunta ${qs.findIndex(x => x.id === obj[key]) + 1} vem antes`]);
       const node = el('select', { class: 'select' }, opts.map(([v, l]) => el('option', { value: v, text: l })));
       node.value = obj[key] || '';
       node.addEventListener('change', () => { if (node.value) obj[key] = node.value; else delete obj[key]; if (key === 'proxima' && !node.value) obj[key] = ''; touch(); refresh(); });
       return node;
     };
     const last = i === qs.length - 1;
-    const box = el('div', { class: 'section' }, el('h3', { text: 'Navegação' }),
-      el('p', { class: 'hint', style: 'margin-bottom:12px', text: 'Por padrão a pessoa segue para a pergunta seguinte. Escolha outro destino para pular perguntas. Para ela a contagem continua sequencial; no sistema a resposta fica salva na posição real.' }),
-      field('Depois desta pergunta, ir para', destSelect(q, 'proxima', last ? 'Envio (é a última pergunta)' : `Pergunta ${i + 2} (padrão)`)));
     const values = branchValuesOf(q);
-    if (values.length) {
-      box.append(el('div', { class: 'field' }, el('label', { text: 'Ou, conforme a resposta' }),
-        values.map(v => el('div', { class: 'route-row' }, el('span', { class: 'route-val', title: v, text: v }), el('span', { class: 'muted', text: '→' }), destSelect(q.ramos, v, 'Seguir a regra acima')))));
-    }
+    const box = el('details', { class: 'more', open: hasRouting(q) || undefined },
+      el('summary', {}, icon('route', 15), 'Lógica: para onde ir depois', icon('chevron', 15)),
+      el('div', { class: 'more-body' },
+        field('Próxima pergunta', destSelect(q, 'proxima', last ? 'Envio (é a última)' : `${i + 2}. A seguinte (padrão)`), undefined, 'Só dá para pular para frente. Perguntas puladas não são exigidas.'),
+        values.length > 0 && el('div', { class: 'field' }, el('label', { text: 'Conforme a resposta' }),
+          values.map(v => el('div', { class: 'route-row' }, el('span', { class: 'route-val', title: v, text: v }), icon('right', 14), destSelect(q.ramos, v, 'Como acima'))))));
     return box;
   }
 
@@ -658,28 +680,28 @@ export async function renderEditor(id, { mount, setCleanup }) {
     const drawRoute = () => fill(routeBox, routingSection(q, i));
     drawRoute();
     const locked = isLocked(q);
-    const typeSelect = el('select', { class: 'select', disabled: locked }, Object.entries(TIPOS).map(([v, t]) => el('option', { value: v, text: t.nome })));
+    const typeSelect = el('select', { class: 'select', disabled: locked, 'aria-label': 'Tipo de pergunta' }, Object.entries(TIPOS).map(([v, t]) => el('option', { value: v, text: t.nome })));
     typeSelect.value = q.tipo;
     typeSelect.addEventListener('change', () => {
       q.tipo = typeSelect.value;
       if (CHOICE.includes(q.tipo) && !q.opcoes.length) q.opcoes = ['Opção 1', 'Opção 2'];
-      if (q.tipo === 'matriz') { if (!q.opcoes.length) q.opcoes = ['Discordo', 'Neutro', 'Concordo']; if (!(q.linhas || []).length) q.linhas = ['Afirmação 1']; }
       if (q.tipo === 'aviso') q.obrigatoria = false;
       if (q.tipo !== 'escala') q.estilo = 'numeros';
+      if (q.tipo === 'matriz') { if (!q.opcoes.length) q.opcoes = ['Discordo', 'Neutro', 'Concordo']; if (!(q.linhas || []).length) q.linhas = ['Afirmação 1']; }
       renderList(); renderPanel(); touch();
     });
 
+    const duplicateQ = () => {
+      const copyQ = JSON.parse(JSON.stringify(q)); copyQ.id = newId(); copyQ.chave = uniqueKey(`${q.chave}_copia`); copyQ._auto = false;
+      qs.splice(i + 1, 0, copyQ); select_(copyQ.id); touch();
+    };
     const parts = [
-      el('div', { class: 'row', style: 'margin-bottom:16px' },
-        el('h2', { class: 'grow', text: `${q.tipo === 'aviso' ? 'Mensagem' : 'Pergunta'} ${i + 1}` }),
-        el('button', { class: 'icon-btn', title: 'Mover para cima', disabled: i === 0, onclick: () => move(-1) }, '↑'),
-        el('button', { class: 'icon-btn', title: 'Mover para baixo', disabled: i === qs.length - 1, onclick: () => move(1) }, '↓'),
-        el('button', { class: 'btn sm', onclick: () => {
-          const copyQ = JSON.parse(JSON.stringify(q)); copyQ.id = newId(); copyQ.chave = uniqueKey(`${q.chave}_copia`); copyQ._auto = false;
-          qs.splice(i + 1, 0, copyQ); select_(copyQ.id); touch();
-        } }, 'Duplicar'),
-        el('button', { class: 'btn sm danger', onclick: () => {
-          if (!confirm('Excluir esta pergunta? As respostas já recebidas continuam salvas e passam a aparecer em “Respostas passadas” no dashboard (vale ao salvar).')) return;
+      head(`${q.tipo === 'aviso' ? 'Mensagem' : 'Pergunta'} ${i + 1}`, [icon(TIPOS[q.tipo].icon, 14), TIPOS[q.tipo].nome],
+        el('button', { class: 'icon-btn', title: 'Mover para cima', 'aria-label': 'Mover para cima', disabled: i === 0, onclick: () => move(-1) }, icon('up', 16)),
+        el('button', { class: 'icon-btn', title: 'Mover para baixo', 'aria-label': 'Mover para baixo', disabled: i === qs.length - 1, onclick: () => move(1) }, icon('down', 16)),
+        el('button', { class: 'icon-btn', title: 'Duplicar', 'aria-label': 'Duplicar', onclick: duplicateQ }, icon('copy', 16)),
+        el('button', { class: 'icon-btn danger', title: 'Excluir', 'aria-label': 'Excluir pergunta', onclick: () => {
+          if (!confirm('Excluir esta pergunta? As respostas já recebidas ficam guardadas em Resultados › Removidas.')) return;
           let refs = 0;
           for (const o of qs) {
             if (o.proxima === q.id) { o.proxima = ''; refs++; }
@@ -690,49 +712,50 @@ export async function renderEditor(id, { mount, setCleanup }) {
           if (hadHook) { w.pergunta = ''; w.ao_responder = false; }
           const rulesBefore = rr.regras.length;
           rr.regras = rr.regras.filter(rule => !rule.condicoes.some(c => c.pergunta === q.id));
-          const droppedRules = rulesBefore - rr.regras.length;
           sch().pontuacao.regras = sch().pontuacao.regras.filter(pr => pr.pergunta !== q.id);
+          const droppedRules = rulesBefore - rr.regras.length;
           qs.splice(i, 1); select_(qs[Math.min(i, qs.length - 1)]?.id || 'welcome'); touch();
           const notes = [refs && `${refs} regra(s) de navegação voltaram ao padrão`, hadHook && 'o webhook por pergunta foi desligado', droppedRules && `${droppedRules} regra(s) de redirecionamento foram removidas`].filter(Boolean);
-          if (notes.length) toast(`Esta pergunta era usada em outros lugares: ${notes.join('; ')}`);
-        } }, 'Excluir')),
-      field('Tipo de pergunta', typeSelect, locked ? 'Não é possível alterar o tipo depois que o formulário foi aberto. Para outro tipo, crie uma nova pergunta (você pode excluir esta: as respostas já dadas ficam guardadas).' : undefined),
-      field(q.tipo === 'aviso' ? 'Título' : 'Enunciado', text(q, 'rotulo', {
+          if (notes.length) toast(`Ajustado onde ela era usada: ${notes.join('; ')}`);
+        } }, icon('trash', 16))),
+      field(q.tipo === 'aviso' ? 'Título' : 'Pergunta', text(q, 'rotulo', {
         multiline: true, rows: 2, placeholder: q.tipo === 'aviso' ? 'Ex.: Agora, algumas perguntas sobre o seu negócio' : 'Ex.: Qual é o seu melhor e-mail?',
         onchange: v => { if (q._auto) q.chave = uniqueKey(slugKey(v) || q.chave, q); refresh(); }
-      }), TOKENS_HINT),
-      field('Descrição (opcional)', text(q, 'ajuda', { multiline: true, rows: 2, placeholder: 'Texto de apoio abaixo do enunciado' }))
+      }), undefined, TOKENS_HINT),
+      field('Descrição (opcional)', text(q, 'ajuda', { multiline: true, rows: 2, placeholder: 'Aparece abaixo da pergunta' })),
+      el('div', { class: 'cols2' },
+        field('Tipo', typeSelect, undefined, locked ? 'O tipo fica travado depois que o formulário recebe respostas. Para trocar, crie outra pergunta (as respostas desta continuam guardadas).' : undefined),
+        TEXTLIKE.includes(q.tipo) || q.tipo === 'dropdown' ? field(q.tipo === 'dropdown' ? 'Texto da busca' : 'Texto de exemplo', text(q, 'placeholder')) : el('div'))
     ];
-    if (q.tipo !== 'aviso') parts.push(toggle(q, 'obrigatoria', 'Resposta obrigatória'));
-    if (TEXTLIKE.includes(q.tipo) || q.tipo === 'dropdown') parts.push(field(q.tipo === 'dropdown' ? 'Texto do campo de busca' : 'Texto de exemplo (placeholder)', text(q, 'placeholder')));
+    if (q.tipo !== 'aviso') parts.push(toggle(q, 'obrigatoria', 'Obrigatória'));
     if (CHOICE.includes(q.tipo)) {
       parts.push(field('Opções', optionsEditor(q, drawRoute)),
-        toggle(q, 'outra', 'Incluir opção “Outra” com campo de texto', { onchange: drawRoute }),
-        q.tipo !== 'dropdown' && toggle(q, 'compacta', 'Mostrar opções lado a lado'));
+        toggle(q, 'outra', 'Opção “Outra” com campo livre', { onchange: drawRoute }),
+        q.tipo !== 'dropdown' && toggle(q, 'compacta', 'Opções lado a lado'));
     }
     if (q.tipo === 'matriz') {
-    parts.push(field('Linhas (afirmações)', linesEditor(q), 'Cada linha recebe uma letra (A, B, C…), usada nas regras de pontuação. Se apagar uma linha do meio, as letras seguintes mudam.'),
-    field('Colunas (alternativas de resposta)', optionsEditor(q, drawRoute), 'Todas as linhas usam as mesmas colunas, na ordem em que aparecem aqui.'));
+      parts.push(field('Linhas', linesEditor(q), undefined, 'As afirmações. Cada uma recebe uma letra (A, B, C…) usada na pontuação. Apagar uma do meio muda as letras seguintes.'),
+        field('Colunas', optionsEditor(q, drawRoute), undefined, 'As alternativas de resposta, iguais para todas as linhas.'));
     }
     if (q.tipo === 'escala') {
-      const lockNote = ' Não pode mudar depois que o formulário foi aberto.';
-      const estiloSel = el('select', { class: 'select', disabled: locked }, [['numeros', 'Números (ex.: NPS de 0 a 10)'], ['estrelas', 'Estrelas'], ['emojis', 'Emojis (3 a 5 carinhas, para satisfação)']].map(([v, l]) => el('option', { value: v, text: l })));
+      const lockNote = ' Travado: o formulário já recebeu respostas.';
+      const estiloSel = el('select', { class: 'select', disabled: locked }, [['numeros', 'Números (ex.: NPS de 0 a 10)'], ['estrelas', 'Estrelas'], ['emojis', 'Carinhas']].map(([v, l]) => el('option', { value: v, text: l })));
       estiloSel.value = q.estilo || 'numeros';
       estiloSel.addEventListener('change', () => { q.estilo = estiloSel.value; if (q.estilo !== 'numeros') { q.min = 1; q.max = 5; } renderPanel(); renderList(); touch(); });
       const lockable = node => { node.disabled = locked; return node; };
-      parts.push(field('Estilo da avaliação', estiloSel, locked ? lockNote.trim() : undefined));
+      parts.push(field('Estilo', estiloSel, undefined, locked ? lockNote.trim() : undefined));
       if (!q.estilo || q.estilo === 'numeros') {
         parts.push(el('div', { class: 'cols2' },
-          field('Início', lockable(select(q, 'min', [[0, '0'], [1, '1']], () => renderPanel()))),
-          field('Fim', lockable(select(q, 'max', [3, 4, 5, 6, 7, 8, 9, 10].map(n => [n, String(n)]), () => renderPanel())))));
+          field('De', lockable(select(q, 'min', [[0, '0'], [1, '1']], () => renderPanel()))),
+          field('Até', lockable(select(q, 'max', [3, 4, 5, 6, 7, 8, 9, 10].map(n => [n, String(n)]), () => renderPanel())))));
       } else if (q.estilo === 'estrelas') {
-        parts.push(field('Quantidade de estrelas', lockable(select(q, 'max', [3, 4, 5, 6, 7, 8, 9, 10].map(n => [n, String(n)]), () => renderPanel())), locked ? lockNote.trim() : undefined));
+        parts.push(field('Estrelas', lockable(select(q, 'max', [3, 4, 5, 6, 7, 8, 9, 10].map(n => [n, String(n)]), () => renderPanel()))));
       } else {
-        parts.push(field('Quantidade de carinhas', lockable(select(q, 'max', [3, 4, 5].map(n => [n, String(n)]), () => renderPanel())), (window.CtfRoute.emojis[q.max] || []).join('  ')));
+        parts.push(field('Carinhas', lockable(select(q, 'max', [3, 4, 5].map(n => [n, String(n)]), () => renderPanel())), (window.CtfRoute.emojis[q.max] || []).join('  ')));
       }
       parts.push(el('div', { class: 'cols2' },
-        field('Rótulo do início', text(q, 'rotulo_min', { placeholder: 'Ex.: Nada provável' })),
-        field('Rótulo do fim', text(q, 'rotulo_max', { placeholder: 'Ex.: Muito provável' }))));
+        field('Legenda do início (opcional)', text(q, 'rotulo_min', { placeholder: 'Ex.: Nada provável' })),
+        field('Legenda do fim (opcional)', text(q, 'rotulo_max', { placeholder: 'Ex.: Muito provável' }))));
     }
     parts.push(routeBox);
     if (q.tipo !== 'aviso') {
@@ -741,39 +764,38 @@ export async function renderEditor(id, { mount, setCleanup }) {
       keyInput.addEventListener('blur', () => { q.chave = uniqueKey(slugKey(keyInput.value) || 'pergunta', q); keyInput.value = q.chave; touch(); });
       const prefill = el('input', { class: 'input mono', value: (q.prefill || []).join(', '), placeholder: 'email, buyer_email' });
       prefill.addEventListener('input', () => { q.prefill = prefill.value.split(',').map(s => s.trim()).filter(Boolean); touch(); });
-      parts.push(el('div', { class: 'section' }, el('h3', { text: 'Dados' }),
-        field('Chave (identificador)', keyInput, 'Nome da resposta nos webhooks e nas exportações. Use letras minúsculas e “_”.'),
-        TEXTLIKE.includes(q.tipo) && field('Preencher a partir da URL', prefill, 'Parâmetros de URL que preenchem esta pergunta. Ex.: ?email=ana@x.com')));
+      parts.push(more('Avançado',
+        field('Nome do campo', keyInput, undefined, 'Identifica a resposta na planilha (CSV), nas integrações e nos textos com {chave}. Ex.: primeiro_nome.'),
+        TEXTLIKE.includes(q.tipo) && field('Preencher pelo link (opcional)', prefill, undefined, 'Se o link tiver esse parâmetro, a resposta já vem preenchida. Ex.: ?email=ana@x.com')));
     }
     return el('div', {}, ...parts);
   }
 
   function designPanel() {
     const t = sch().tema;
+    const same = p => ['fundo', 'texto', 'destaque', 'destaque2'].every(k => (p[k] || '').toLowerCase() === (t[k] || '').toLowerCase());
+    const radius = el('input', { type: 'range', min: 0, max: 24, value: t.raio, 'aria-label': 'Arredondamento' });
+    const radiusOut = el('output', { text: `${t.raio}px` });
+    radius.addEventListener('input', () => { t.raio = Number(radius.value); radiusOut.textContent = `${t.raio}px`; touch(); });
     return el('div', {},
-      el('h2', { text: 'Aparência', style: 'margin-bottom:16px' }),
-      el('div', { class: 'field' }, el('label', { text: 'Temas prontos' }),
+      head('Aparência'),
+      el('div', { class: 'section' }, el('h3', { text: 'Tema' }),
         el('div', { class: 'swatches' }, THEME_PRESETS.map(p => el('button', {
-          class: 'swatch', type: 'button',
-          onclick: () => { Object.assign(t, { fundo: p.fundo, texto: p.texto, destaque: p.destaque, destaque2: p.destaque2 }); renderPanel(); touch(); }
+          class: `swatch${same(p) ? ' on' : ''}`, type: 'button', 'aria-pressed': String(same(p)),
+          onclick: () => { Object.assign(t, { fundo: p.fundo, texto: p.texto, destaque: p.destaque, destaque2: p.destaque2 }, p.fonte ? { fonte: p.fonte, raio: p.raio, grade: p.grade } : {}); renderPanel(); touch(); }
         }, el('i', {}, el('b', { style: `background:${p.fundo}` }), el('b', { style: `background:${p.destaque}` }), el('b', { style: `background:${p.destaque2}` })), p.nome)))),
       el('div', { class: 'section' }, el('h3', { text: 'Cores' }),
         el('div', { class: 'cols2' }, field('Fundo', color(t, 'fundo')), field('Texto', color(t, 'texto'))),
-        el('div', { class: 'cols2' }, field('Destaque (botões, progresso, seleção)', color(t, 'destaque')), field('Destaque secundário (gradiente dos títulos)', color(t, 'destaque2')))),
-      el('div', { class: 'section' }, el('h3', { text: 'Tipografia e formas' }),
-        field('Fonte', select(t, 'fonte', FONTS.map(f => [f, f]))),
-        field(`Arredondamento dos cantos (${t.raio}px)`, (() => {
-          const r = el('input', { type: 'range', min: 0, max: 24, value: t.raio, style: 'width:100%' });
-          r.addEventListener('input', () => { t.raio = Number(r.value); r.closest('.field').querySelector('label').textContent = `Arredondamento dos cantos (${t.raio}px)`; touch(); });
-          return r;
-        })()),
-        toggle(t, 'grade', 'Mostrar linhas de grade no fundo')),
+        el('div', { class: 'cols2' }, field('Destaque', color(t, 'destaque'), undefined, 'Botões, barra de progresso e opção selecionada.'), field('Destaque 2', color(t, 'destaque2'), undefined, 'Segunda cor do degradê nos títulos.'))),
+      el('div', { class: 'section' }, el('h3', { text: 'Letras e formas' }),
+        el('div', { class: 'cols2' },
+          field('Fonte', select(t, 'fonte', FONTS.map(f => [f, f]))),
+          field('Cantos', el('div', { class: 'range-row' }, radius, radiusOut))),
+        toggle(t, 'grade', 'Linhas de grade no fundo')),
       el('div', { class: 'section' }, el('h3', { text: 'Imagens' }),
-        imageField(t, 'logo', 'Logo (canto superior)', 'PNG, SVG, JPG ou WebP até 4 MB. Fundo transparente funciona melhor.'),
-        imageField(t, 'fundo_imagem', 'Imagem de fundo (opcional)', 'Recebe uma camada escura/clara por cima para manter o texto legível.')));
+        imageField(t, 'logo', 'Logo', 'PNG, SVG, JPG ou WebP até 4 MB. Fundo transparente fica melhor.'),
+        imageField(t, 'fundo_imagem', 'Imagem de fundo (opcional)', 'Ganha uma camada por cima para o texto continuar legível.')));
   }
-
-  function jump(sel) { S.tab = 'conteudo'; S.sel = sel; syncTabs(); renderList(); sendPreview(); }
 
   // How the link looks when shared (WhatsApp, Instagram, Telegram…): the server writes these into the page head.
   function seoCard() {
@@ -783,11 +805,13 @@ export async function renderEditor(id, { mount, setCleanup }) {
       seo.imagem && el('img', { src: seo.imagem, alt: '' }),
       el('div', { class: 'sc-body' }, el('small', { text: location.host }), el('b', { text: seo.titulo || S.titulo || 'Título do formulário' }), el('span', { text: seo.descricao || plain(sch().boas_vindas.texto) || '' })));
     draw();
-    return el('div', { class: 'section' }, el('h3', { text: 'Compartilhamento (prévia do link)' }),
-      field('Título', text(seo, 'titulo', { placeholder: S.titulo, onchange: draw }), 'Se vazio, usa o nome do formulário. Até 90 caracteres.'),
-      field('Descrição', text(seo, 'descricao', { multiline: true, rows: 2, placeholder: plain(sch().boas_vindas.texto), onchange: draw }), 'Se vazia, usa o texto da boas-vindas. Até 200 caracteres.'),
-      imageField(seo, 'imagem', 'Imagem de prévia', 'Ideal: 1200 × 630 px (JPG ou PNG).', draw),
-      el('div', { class: 'field' }, el('label', { text: 'Como aparece ao compartilhar' }), card));
+    return el('div', { class: 'section' }, el('h3', {}, 'Prévia ao compartilhar', tip('Como o link aparece no WhatsApp, Instagram, Telegram e afins.')),
+      el('p', { class: 'hint', text: 'O cartão que aparece quando alguém envia o link.' }),
+      card,
+      more('Personalizar',
+        field('Título (opcional)', text(seo, 'titulo', { placeholder: S.titulo, onchange: draw }), undefined, 'Vazio: usa o nome do formulário. Até 90 caracteres.'),
+        field('Descrição (opcional)', text(seo, 'descricao', { multiline: true, rows: 2, placeholder: plain(sch().boas_vindas.texto), onchange: draw }), undefined, 'Vazia: usa o texto da boas-vindas. Até 200 caracteres.'),
+        imageField(seo, 'imagem', 'Imagem', 'Ideal: 1200 × 630 px (JPG ou PNG).', draw)));
   }
 
   function settingsPanel() {
@@ -799,38 +823,34 @@ export async function renderEditor(id, { mount, setCleanup }) {
       S.slug = clean; S.slugErro = ''; slugInput.classList.remove('bad'); touch();
     });
     return el('div', {},
-      el('h2', { text: 'Ajustes', style: 'margin-bottom:16px' }),
-      el('div', { class: 'section' }, el('h3', { text: 'Endereço do formulário' }),
+      head('Ajustes'),
+      el('div', { class: 'section' }, el('h3', { text: 'Link do formulário' }),
         el('div', { class: 'slug-box' }, el('span', { text: `${location.host}/f/` }), slugInput),
-        S.slugErro && el('p', { class: 'hint', style: 'color:var(--err);margin-top:6px', text: S.slugErro }),
-        el('p', { class: 'hint', style: 'margin:8px 0 12px', text: 'Use letras minúsculas, números e hífens. Se você mudar o slug, o link antigo deixa de funcionar.' }),
-        el('div', { class: 'row' },
-          el('button', { class: 'btn sm', type: 'button', onclick: () => { S.slug = slugUrl(plain(S.titulo)) || S.slug; renderPanel(); touch(); } }, 'Gerar a partir do título'),
-          el('button', { class: 'btn sm', type: 'button', onclick: () => copy(formUrl(S.slug)) }, 'Copiar link'),
-          el('a', { class: 'btn sm', href: `/f/${S.slug}`, target: '_blank', rel: 'noopener' }, S.status === 'published' ? 'Abrir ↗' : 'Abrir (após publicar) ↗'))),
-      el('div', { class: 'section' }, el('h3', { text: 'Telas e regras' }),
-        el('p', { class: 'hint', style: 'margin-bottom:12px', text: 'A página de obrigado, o redirecionamento condicional e a agenda ficam na aba Conteúdo, no fim da lista.' }),
-        el('div', { class: 'row wrap' },
-          el('button', { class: 'btn sm', type: 'button', onclick: () => jump('final') }, 'Tela final e redirecionamento →'),
-          el('button', { class: 'btn sm', type: 'button', onclick: () => jump('encerrado') }, 'Agenda e encerramento →'))),
-      el('div', { class: 'section' }, el('h3', { text: 'Consentimento' }),
-        toggle(sch().consentimento, 'ativo', 'Exigir autorização antes de enviar (LGPD)', { rerender: true }),
-        sch().consentimento.ativo && field('Texto da autorização', text(sch().consentimento, 'texto', { multiline: true, rows: 3 }))),
+        S.slugErro
+          ? el('p', { class: 'hint', style: 'color:var(--err);margin-top:6px', text: S.slugErro })
+          : S.slug !== form.slug && S.opened && el('p', { class: 'hint', style: 'color:var(--warn);margin-top:6px', text: 'Ao salvar, o link antigo para de funcionar.' }),
+        el('div', { class: 'row wrap', style: 'margin-top:12px' },
+          el('button', { class: 'btn sm', type: 'button', onclick: () => copy(formUrl(S.slug)) }, icon('copy', 14), 'Copiar'),
+          S.status === 'published' && el('a', { class: 'btn sm', href: `/f/${S.slug}`, target: '_blank', rel: 'noopener' }, icon('external', 14), 'Abrir'),
+          el('button', { class: 'btn ghost sm', type: 'button', onclick: () => { S.slug = slugUrl(plain(S.titulo)) || S.slug; renderPanel(); touch(); } }, 'Usar o nome do formulário'))),
+      el('div', { class: 'section' }, el('h3', { text: 'Comportamento' }),
+        toggle(a, 'mostrar_progresso', 'Barra de progresso'),
+        toggle(a, 'mostrar_numero', 'Número de cada pergunta'),
+        toggle(a, 'uma_vez', 'Uma resposta por pessoa', { help: 'Depois de enviar, o mesmo navegador não consegue responder de novo.' }),
+        toggle(sch().consentimento, 'ativo', 'Pedir consentimento (LGPD) antes de enviar', { rerender: true }),
+        sch().consentimento.ativo && field('Texto do consentimento', text(sch().consentimento, 'texto', { multiline: true, rows: 3 }))),
       webhookCard(),
       seoCard(),
-      el('div', { class: 'section' }, el('h3', { text: 'Comportamento' }),
-        toggle(a, 'mostrar_progresso', 'Mostrar barra e contador de progresso'),
-        toggle(a, 'mostrar_numero', 'Mostrar o número de cada pergunta'),
-        toggle(a, 'uma_vez', 'Impedir nova resposta no mesmo navegador depois de enviar'),
-        field('Texto do topo (opcional)', text(a, 'rotulo_topo', { placeholder: 'Ex.: PROTOCOLO: BALF-360-2026' }), 'Aparece ao lado do logo, em fonte mono.'),
-        field('Parâmetros de URL a guardar (opcional)', text(a, 'params_extra', { placeholder: 'ref, campanha' }),
-          'Já guardamos utm_*, transaction, sck, src e xcod. Liste aqui outros parâmetros que queira registrar junto de cada resposta.')));
+      el('div', { class: 'section' },
+        more('Avançado',
+          field('Texto no topo (opcional)', text(a, 'rotulo_topo', { placeholder: 'Ex.: Pesquisa 2026' }), undefined, 'Aparece ao lado do logo.'),
+          field('Guardar parâmetros do link (opcional)', text(a, 'params_extra', { placeholder: 'ref, campanha' }), undefined, 'Nomes de parâmetros do link (além de UTMs) para salvar junto com as respostas. Separe por vírgula.'))));
   }
 
   /* ----- top bar ----- */
   const topEl = el('div', { class: 'ed-top' });
   const tabsEl = el('div', { class: 'tabs', role: 'tablist' });
-  const TABS = [['conteudo', 'Conteúdo'], ['design', 'Aparência'], ['ajustes', 'Ajustes']];
+  const TABS = [['conteudo', 'Perguntas'], ['design', 'Aparência'], ['ajustes', 'Ajustes']];
   function syncTabs() {
     fill(tabsEl, ...TABS.map(([k, label]) => el('button', {
       class: 'tab', role: 'tab', 'aria-selected': String(S.tab === k),
@@ -867,28 +887,39 @@ export async function renderEditor(id, { mount, setCleanup }) {
     titleInput.addEventListener('input', () => { S.titulo = titleInput.value; touch(); });
     const leave = e => { if (dirty && !confirm('Há alterações não salvas. Sair sem salvar?')) e.preventDefault(); };
     const st = estado();
-    const pill = { aberto: ['No ar', 'ok'], em_breve: ['Agendado', 'warn'], encerrado: ['Encerrado', 'err'] }[st];
-    fill(topEl,
-      el('a', { class: 'btn ghost sm', href: '#/', onclick: leave }, '← Formulários'),
-      titleInput, tabsEl, el('div', { class: 'grow' }),
-      pill && el('span', { class: `pill ${pill[1]}`, text: pill[0] }),
+    const moreBtn = el('button', { class: 'btn sm icon ghost', 'aria-label': 'Mais ações', title: 'Mais ações', onclick: () => popMenu(moreBtn, [
+      ['Copiar link', 'copy', () => copy(formUrl(S.slug))],
+      S.status === 'published' && ['Abrir formulário', 'external', () => window.open(`/f/${S.slug}`, '_blank', 'noopener')],
+      S.status === 'published' && null,
+      S.status === 'published' && ['Encerrar agora', 'stop', closeNow],
+      S.status === 'closed' && ['Reabrir', 'play', reopen],
+      S.status !== 'draft' && ['Tirar do ar', 'eyeoff', unpublish, { danger: true }]
+    ]) }, icon('more', 18));
+    const actions = el('div', { class: 'ed-actions' },
+      S.status !== 'draft' && statusPill(st),
       stateEl,
-      el('a', { class: 'btn sm', href: `#/forms/${id}/results`, onclick: leave }, 'Resultados'),
-      S.status !== 'draft' && el('button', { class: 'btn sm', onclick: () => copy(formUrl(S.slug)) }, 'Copiar link'),
+      el('a', { class: 'btn sm icon ghost', href: `#/forms/${id}/results`, title: 'Resultados', 'aria-label': 'Resultados', onclick: leave }, icon('chart', 17)),
+      moreBtn,
       saveBtn,
-      S.status === 'published' && el('button', { class: 'btn sm', onclick: closeNow }, 'Encerrar'),
-      S.status === 'closed' && el('button', { class: 'btn primary sm', onclick: reopen }, 'Reabrir'),
-      S.status !== 'draft' ? el('button', { class: 'btn sm', onclick: unpublish }, 'Despublicar') : el('button', { class: 'btn primary sm', onclick: publish }, 'Publicar'));
+      S.status === 'draft' && el('button', { class: 'btn accent sm', onclick: publish }, 'Publicar'));
+    fill(topEl,
+      el('div', { class: 'ed-left' },
+        el('a', { class: 'icon-btn', href: '#/', title: 'Voltar aos formulários', 'aria-label': 'Voltar aos formulários', onclick: leave }, icon('back', 17)),
+        titleInput),
+      tabsEl, actions);
     syncSaveBtn();
   }
 
   /* ----- preview column ----- */
   const stageEl = el('div', { class: 'pv-stage' }, frame);
+  const deviceTabs = el('div', { class: 'tabs', role: 'group', 'aria-label': 'Tamanho da prévia' });
+  const drawDevices = () => fill(deviceTabs, [['monitor', 'Computador', false], ['phone_d', 'Celular', true]].map(([ic, label, mobile]) => el('button', {
+    class: 'tab', style: 'padding:0 8px', title: label, 'aria-label': label, 'aria-selected': String(S.mobile === mobile),
+    onclick: () => { S.mobile = mobile; stageEl.classList.toggle('mobile', mobile); drawDevices(); }
+  }, icon(ic, 15))));
+  drawDevices();
   const previewEl = el('aside', { class: 'ed-preview' },
-    el('div', { class: 'pv-bar' }, el('b', { text: 'Pré-visualização' }), el('div', { class: 'grow' }),
-      ...[['Desktop', false], ['Celular', true]].map(([label, mobile]) => el('button', {
-        class: 'btn sm ghost', onclick: () => { S.mobile = mobile; stageEl.classList.toggle('mobile', mobile); }
-      }, label))),
+    el('div', { class: 'pv-bar' }, icon('eye', 15), el('b', { text: 'Prévia' }), el('div', { class: 'grow' }), deviceTabs),
     stageEl);
 
   bodyEl.append(listEl, panelEl, previewEl);

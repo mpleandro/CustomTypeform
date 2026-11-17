@@ -36,6 +36,11 @@ Painel: http://127.0.0.1:3000/admin/ · Formulários publicados: http://127.0.0.
   **estrelas** (3 a 10) e **emojis** (3 a 5 carinhas, para satisfação).
 - **O tipo da pergunta trava depois que o formulário é aberto** (publicado pela primeira vez): as respostas já recebidas deixariam de fazer sentido.
   Vale também para o estilo e a escala da avaliação. Para outro tipo, crie uma pergunta nova (a antiga pode ser excluída; as respostas viram “passadas”).
+- **Grupos de perguntas** (*Configurações*, no topo da página inicial): conjuntos prontos de perguntas para reutilizar, como
+  *Dados pessoais* (nome, e-mail, WhatsApp) e *Dados financeiros* (renda, custos, investimentos), que já vêm criados e podem ser editados.
+  No editor, *Adicionar pergunta › Grupos* insere todas as perguntas do grupo no fim do formulário; o ícone de camadas ao lado de
+  “Perguntas” salva perguntas do formulário atual como um grupo novo. As perguntas inseridas são cópias: editar o grupo depois não muda
+  formulários existentes. Nomes de campo repetidos ganham um número (ex.: `email_2`).
 - **Aparência**: temas prontos, cores, fonte, cantos, logo, imagem de fundo.
 - **Criação de formulários**: informe o nome e escolha um template visual — BALF 360, Vértuz, Jornada Plenitude, Mentoria Mil Milionários ou Ignis. O tema pode ser ajustado depois em *Aparência*.
 - **Webhook** único por formulário, configurado em *Ajustes › Integrações*, com duas caixas: **ao concluir o formulário** e/ou **ao responder uma

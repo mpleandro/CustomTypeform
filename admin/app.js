@@ -1,6 +1,7 @@
 import { el, fill, api, toast, copy, fmtNum, fmtPct, formUrl, icon, popMenu, statusPill, themeSwitch } from './ui.js';
 import { renderEditor } from './editor.js';
 import { renderResults } from './results.js';
+import { renderSettings, renderGroup } from './groups.js';
 import { FORM_TEMPLATES } from './templates.js';
 
 const app = document.getElementById('app');
@@ -40,6 +41,7 @@ function shell(content) {
     el('header', { class: 'topbar' },
       el('a', { href: '#/' }, brand()),
       el('div', { class: 'grow' }),
+      el('a', { class: 'btn ghost sm', href: '#/config' }, icon('settings', 15), 'Configurações'),
       themeSwitch(),
       el('button', { class: 'btn ghost sm', onclick: async () => { await api('POST', '/logout'); route(); } }, icon('logout', 15), 'Sair')),
     el('main', { class: 'page' }, content));
@@ -186,12 +188,14 @@ async function listView() {
 
 async function route() {
   cleanup?.(); cleanup = null; // stop the previous view's timers/listeners before drawing the next
-  document.querySelector('.pop')?.remove();
+  document.querySelectorAll('.pop, .menu').forEach(n => n.remove());
   let me;
   try { me = await api('GET', '/me'); } catch { return loginView(true); }
   if (!me.autenticado) return loginView(me.configurado);
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   try {
+    if (parts[0] === 'config' && parts[1] === 'grupos' && parts[2]) return await renderGroup(parts[2], { mount, shell, setCleanup });
+    if (parts[0] === 'config') return await renderSettings({ mount, shell });
     if (parts[0] === 'forms' && parts[1] && parts[2] === 'results') return await renderResults(parts[1], { mount, shell, setCleanup });
     if (parts[0] === 'forms' && parts[1]) return await renderEditor(parts[1], { mount, setCleanup });
     await listView();

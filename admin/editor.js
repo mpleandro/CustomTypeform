@@ -237,12 +237,67 @@ export async function renderEditor(id, { mount, setCleanup }) {
     return node;
   }
 
-  function openAddMenu(anchor) {
+  /* ----- question groups (Configurações › Grupos de perguntas) ----- */
+  let groupsCache = null;
+  const loadGroups = async () => (groupsCache ??= (await api('GET', '/groups')).grupos);
+
+  // Inserts copies of a group's questions at the end (like a single new question), with fresh ids and unique field names.
+  function insertGroup(g) {
+    const qs = sch().perguntas;
+    const copies = g.perguntas.map(q => ({ ...JSON.parse(JSON.stringify(q)), id: newId(), proxima: '', ramos: {}, _auto: false }));
+    for (const c of copies) c.chave = uniqueKey(c.chave || slugKey(plain(c.rotulo)) || 'pergunta', c);
+    // uniqueKey only sees questions already in the form, so dedupe within the group too.
+    const seen = new Set(qs.map(q => q.chave));
+    for (const c of copies) { let k = c.chave, n = 2; while (seen.has(k)) k = `${c.chave}_${n++}`; c.chave = k; seen.add(k); }
+    qs.push(...copies);
+    S.tab = 'conteudo'; syncTabs();
+    select_(copies[0].id); touch();
+    toast(`${copies.length} pergunta${copies.length === 1 ? '' : 's'} de “${g.nome}” adicionada${copies.length === 1 ? '' : 's'}`);
+  }
+
+  // Saves questions of this form as a reusable group.
+  function saveAsGroup(preselect) {
+    const qs = sch().perguntas;
+    if (!qs.length) { toast('Crie perguntas primeiro.', 'err'); return; }
+    const name = el('input', { class: 'input', placeholder: 'Ex.: Dados pessoais', maxlength: 80, required: true });
+    const checks = qs.map(q => el('input', { type: 'checkbox', checked: preselect ? q.id === preselect : false, value: q.id }));
+    const err = el('p', { class: 'notice err', hidden: true });
+    const btn = el('button', { class: 'btn primary', type: 'submit' }, 'Salvar grupo');
+    const dialog = el('dialog', { class: 'create-dialog', style: 'width:min(520px,calc(100vw - 32px))', onclose: () => dialog.remove(), onclick: e => { if (e.target === dialog) dialog.close(); } },
+      el('form', { class: 'create-form', onsubmit: async e => {
+        e.preventDefault();
+        const picked = qs.filter((q, i) => checks[i].checked);
+        if (!picked.length) { err.textContent = 'Marque pelo menos uma pergunta.'; err.hidden = false; return; }
+        btn.disabled = true;
+        try {
+          await api('POST', '/groups', { nome: name.value.trim(), perguntas: picked.map(({ _auto, ...q }) => q) });
+          groupsCache = null; dialog.close(); toast(`Grupo “${name.value.trim()}” salvo. Use em Adicionar pergunta › Grupos.`);
+        } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
+      } },
+        el('div', { class: 'create-dialog-head' }, el('div', {}, el('h2', { text: 'Salvar como grupo' }), el('p', { class: 'muted', text: 'Reutilize estas perguntas em outros formulários.' })),
+          el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Fechar', onclick: () => dialog.close() }, icon('x', 18))),
+        el('label', { class: 'field' }, el('span', { class: 'label', text: 'Nome do grupo' }), name),
+        el('div', { class: 'field' }, el('div', { class: 'row' }, el('span', { class: 'label grow', text: 'Perguntas' }),
+          el('button', { class: 'btn ghost sm', type: 'button', onclick: () => { const all = checks.every(c => c.checked); checks.forEach(c => { c.checked = !all; }); } }, 'Marcar todas')),
+          el('div', { class: 'pick-list' }, qs.map((q, i) => el('label', {}, checks[i], typeIcon(q.tipo), el('span', { class: 'txt' }, el('em', { class: 'muted', style: 'font-style:normal;margin-right:4px', text: String(i + 1) }), plain(q.rotulo) || 'Sem título'))))),
+        err,
+        el('div', { class: 'create-dialog-actions' }, el('button', { class: 'btn', type: 'button', onclick: () => dialog.close() }, 'Cancelar'), btn)));
+    document.body.append(dialog); dialog.showModal(); name.focus();
+  }
+
+  async function openAddMenu(anchor) {
     document.querySelector('.menu')?.remove();
     const rect = anchor.getBoundingClientRect();
-    const menu = el('div', { class: 'menu', role: 'menu', 'aria-label': 'Tipo de pergunta', style: `left:${Math.max(8, rect.left)}px;top:${Math.min(rect.bottom + 6, window.innerHeight - 340)}px` },
+    const grupos = await loadGroups().catch(() => []);
+    const menu = el('div', { class: 'menu', role: 'menu', 'aria-label': 'Adicionar pergunta', style: `left:${Math.max(8, rect.left)}px;top:${Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - 420))}px` },
+      grupos.length > 0 && [el('div', { class: 'menu-sep', text: 'Grupos' }),
+        grupos.map(g => el('button', { type: 'button', role: 'menuitem', title: g.perguntas.map(q => plain(q.rotulo)).join(' · '), onclick: () => { done(); insertGroup(g); } },
+          el('span', { class: 'badge grp' }, icon('layers', 14)), el('span', {}, g.nome, el('small', { text: `${g.perguntas.length} pergunta${g.perguntas.length === 1 ? '' : 's'}${g.descricao ? ` · ${g.descricao}` : ''}` })))),
+        el('hr'), el('div', { class: 'menu-sep', text: 'Pergunta avulsa' })],
       Object.entries(TIPOS).map(([tipo, t]) => el('button', { type: 'button', role: 'menuitem', onclick: () => { done(); addQuestion(tipo); } },
-        typeIcon(tipo), el('span', {}, t.nome, el('small', { text: t.desc })))));
+        typeIcon(tipo), el('span', {}, t.nome, el('small', { text: t.desc })))),
+      el('hr'),
+      el('a', { class: 'menu-link', href: '#/config', role: 'menuitem', onclick: e => { if (dirty && !confirm('Há alterações não salvas. Sair sem salvar?')) e.preventDefault(); done(); } }, icon('settings', 14), 'Gerenciar grupos'));
     document.body.append(menu);
     const done = () => { menu.remove(); document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc); };
     const close = e => { if (!menu.contains(e.target)) done(); };
@@ -275,7 +330,8 @@ export async function renderEditor(id, { mount, setCleanup }) {
     fill(listEl, 
       el('div', { class: 'list-sep', text: 'Início' }),
       item('welcome', 'flag', sch().boas_vindas.ativo ? plain(sch().boas_vindas.titulo) || 'Boas-vindas' : 'Boas-vindas (desligada)', { off: !sch().boas_vindas.ativo }),
-      el('div', { class: 'list-sep' }, 'Perguntas', el('span', { class: 'grow' }), el('span', { class: 'num', text: String(qs.length) })),
+      el('div', { class: 'list-sep' }, 'Perguntas', el('span', { class: 'num', style: 'margin-left:6px', text: String(qs.length) }), el('span', { class: 'grow' }),
+        qs.length > 0 && el('button', { class: 'icon-btn', style: 'width:24px;height:24px', type: 'button', title: 'Salvar perguntas como grupo', 'aria-label': 'Salvar perguntas como grupo', onclick: () => saveAsGroup(qs.some(q => q.id === S.sel) ? S.sel : null) }, icon('layers', 14))),
       qs.map((q, i) => item(q.id, typeIcon(q.tipo), plain(q.rotulo) || 'Sem título', { n: String(i + 1), draggable: true, index: i, hook: sch().ajustes.webhook.ao_responder && sch().ajustes.webhook.pergunta === q.id, route: hasRouting(q) })),
       el('button', { class: 'add-q', type: 'button', onclick: e => openAddMenu(e.currentTarget) }, icon('plus', 15), 'Adicionar pergunta'),
       el('div', { class: 'list-sep', text: 'Final' }),

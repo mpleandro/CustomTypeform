@@ -416,7 +416,7 @@ function questionScreen(s, root) {
   return el('section', {},
     el('div', { class: `q-head${showNum ? '' : ' no-num'}` },
       showNum && el('span', { class: 'q-num', 'aria-hidden': 'true', text: pad2(shownNumber()) }),
-      el('h2', { class: 'q-label', id: labelId }, rich(q.rotulo), !q.obrigatoria && q.tipo !== 'aviso' && el('small', { text: '(opcional)' })),
+      el('h2', { class: 'q-label', id: labelId }, rich(q.rotulo)),
       q.ajuda && el('p', { class: 'q-help', id: helpId, text: interp(q.ajuda) })
     ),
     field && el('div', { class: `q-body${showNum ? '' : ' no-indent'}` }, field, error),
@@ -428,7 +428,9 @@ function questionScreen(s, root) {
 function consentScreen(root) {
   const error = el('p', { class: 'error', role: 'alert', hidden: true });
   const box = el('input', { type: 'checkbox', id: 'consent' });
-  box.checked = !!answers.consentimento;
+  // Optional: starts checked or unchecked as set in the editor; what the person leaves is what is sent.
+  if (answers.consentimento === undefined) answers.consentimento = !!schema.consentimento.pre_marcado;
+  box.checked = answers.consentimento === true;
   box.addEventListener('change', () => { answers.consentimento = box.checked; error.hidden = true; saveDraft(); });
   const submitBtn = el('button', { class: 'btn', type: 'button', onclick: next }, schema.envio.botao, el('span', { text: '↗' }));
   root._error = error;
@@ -559,7 +561,6 @@ function next() {
     const message = validate(s.q);
     if (message) return showError(root, message);
   }
-  if (s.kind === 'consent' && !PREVIEW && !answers.consentimento) return showError(root, 'Para enviar, marque a autorização acima.');
   if (s.kind === 'question') track(s.q);
   if (isLastInput(index)) return submit(root);
   const target = nextScreen(index);

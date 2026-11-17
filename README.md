@@ -43,7 +43,14 @@ Painel: http://127.0.0.1:3000/admin/ · Formulários publicados: http://127.0.0.
   formulários existentes. Nomes de campo repetidos ganham um número (ex.: `email_2`).
 - **Aparência**: temas prontos, cores, fonte, cantos, logo, imagem de fundo.
 - **Criação de formulários**: informe o nome e escolha um template visual — BALF 360, Vértuz, Jornada Plenitude, Mentoria Mil Milionários ou Ignis. O tema pode ser ajustado depois em *Aparência*.
-- **Webhook** único por formulário, configurado em *Ajustes › Integrações*, com duas caixas: **ao concluir o formulário** e/ou **ao responder uma
+- **Integrações**: ligue *Enviar respostas por webhook* em *Ajustes* e a aba **Integrações** aparece no editor. Nela ficam:
+  o webhook (endereço, quando enviar, chave secreta, *Enviar exemplo*); os **valores das respostas** (cada opção pode enviar
+  um valor próprio, ex.: “De R$ 1.000 a R$ 2.000” → `abaixo_2000`; vazio envia o texto da opção; o CSV traz as duas colunas,
+  texto e valor); e os **campos personalizados** (ex.: `user_tag`), enviados dentro de `respostas` sem aparecer no formulário
+  (o valor aceita `{chave}`).
+- **Consentimento (LGPD)** em *Ajustes*: opcional para quem responde, começa marcado ou desmarcado; o webhook recebe
+  `consentimento: true/false` e o CSV ganha a coluna `consentimento`.
+- **Webhook** único por formulário, com duas caixas: **ao concluir o formulário** e/ou **ao responder uma
   pergunta específica** (você escolhe qual). Não dispara a cada pergunta. Assinatura HMAC (`X-Webhook-Signature`), 3 tentativas,
   botões de teste e histórico.
 - **Redirecionamento condicional** (*Tela de obrigado › Levar para outra página*): regras do tipo “pergunta 1 é A **e** pergunta 2 é C **e** pergunta 3 é D

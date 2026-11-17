@@ -184,8 +184,8 @@ export async function renderEditor(id, { mount, setCleanup }) {
             el('pre', { class: 'code', text: json }))));
       } catch (e) { result.className = 'pill err'; result.textContent = e.message; }
     };
-    const box = el('div', { class: 'section' }, el('h3', {}, 'Integrações', tip('Manda as respostas sozinho para outro sistema (CRM, planilha, Zapier, Make, n8n…) por webhook.')),
-      el('p', { class: 'hint', text: 'Envie as respostas para outro sistema.' }),
+    const box = el('div', { class: 'section' }, el('h3', {}, 'Webhook', tip('Manda as respostas sozinho para outro sistema (CRM, planilha, Zapier, Make, n8n…).')),
+      el('p', { class: 'hint', text: 'Para onde e quando enviar as respostas.' }),
       field('Endereço de destino', text(w, 'url', { placeholder: 'https://…', type: 'url' }), undefined, 'A URL do webhook que vai receber as respostas.'),
       el('div', { class: 'label', style: 'margin-bottom:10px' }, 'Quando enviar'),
       toggle(w, 'ao_concluir', 'Quando a pessoa concluir'),
@@ -204,6 +204,80 @@ export async function renderEditor(id, { mount, setCleanup }) {
         w.ao_responder && w.pergunta && el('button', { class: 'btn sm ghost', type: 'button', title: 'Envia como se a pessoa tivesse acabado de responder a pergunta escolhida', onclick: () => test(w.pergunta) }, 'Exemplo da pergunta'),
         result), sent, logs);
     return box;
+  }
+
+  /* ----- Integrações tab (shown while the webhook is on in Ajustes) ----- */
+  const valueOptionsOf = q => (['unica', 'multipla', 'dropdown'].includes(q.tipo) ? [...q.opcoes.filter(Boolean), ...(q.outra ? ['Outra'] : [])]
+    : q.tipo === 'matriz' ? q.opcoes.filter(Boolean) : q.tipo === 'sim_nao' ? ['Sim', 'Não']
+    : q.tipo === 'escala' ? Array.from({ length: q.max - q.min + 1 }, (_, k) => String(q.min + k)) : []);
+
+  // What each answer sends: the label the person saw (default) or a custom value.
+  function valuesSection() {
+    const qs = sch().perguntas.map((q, i) => ({ q, i })).filter(({ q }) => q.tipo !== 'aviso');
+    const withOpts = qs.filter(({ q }) => valueOptionsOf(q).length);
+    const open = qs.filter(({ q }) => !valueOptionsOf(q).length);
+    const card = ({ q, i }) => {
+      q.valores ??= {};
+      const rows = valueOptionsOf(q).map(o => {
+        const input = el('input', { class: 'input mono', value: q.valores[o] ?? '', placeholder: o, 'aria-label': `Valor enviado para “${o}”` });
+        input.addEventListener('input', () => { const v = input.value.trim(); if (v && v !== o) q.valores[o] = input.value; else delete q.valores[o]; touch(); });
+        return el('div', { class: 'val-row' }, el('span', { class: 'route-val', title: o, text: q.tipo === 'escala' ? faceFor(q, Number(o)) : o }), icon('right', 14), input);
+      });
+      return el('div', { class: 'rule' },
+        el('div', { class: 'val-head' }, typeIcon(q.tipo), el('b', { class: 'grow', text: `${i + 1}. ${plain(q.rotulo) || 'Sem título'}` }), el('code', { class: 'key', title: 'Nome do campo no webhook', text: q.chave })),
+        el('div', { class: 'val-cols' }, el('span', { text: 'Resposta' }), el('span'), el('span', { text: 'Valor enviado' })),
+        rows);
+    };
+    return el('div', { class: 'section' },
+      el('h3', {}, 'Valores das respostas', tip('O webhook envia o valor. Vazio: envia o próprio texto da opção. A planilha CSV traz as duas colunas (texto e valor); o painel continua mostrando o texto.')),
+      el('p', { class: 'hint', text: 'Troque o que é enviado para cada opção. Ex.: “De R$ 1.000 a R$ 2.000” → abaixo_2000.' }),
+      withOpts.length ? withOpts.map(card) : el('p', { class: 'note' }, icon('info', 14), 'Nenhuma pergunta de opções ainda.'),
+      open.length > 0 && el('p', { class: 'hint', style: 'margin-top:8px' }, `Perguntas abertas enviam o que a pessoa digitou: ${open.map(({ q }) => q.chave).join(', ')}.`));
+  }
+
+  // Hidden fields sent with every webhook, never shown to the respondent (e.g. user_tag).
+  function extrasSection() {
+    const w = sch().ajustes.webhook;
+    w.extras ??= [];
+    const holder = el('div');
+    let rows = [];
+    // Validates names in place (no redraw), so moving from one field to the next never loses focus or typing.
+    const check = () => {
+      const qKeys = new Set(sch().perguntas.map(q => q.chave));
+      for (const r of rows) {
+        const k = r.x.chave, dup = w.extras.filter(x => x.chave === k).length > 1;
+        const bad = !k ? '' : !/^[a-z0-9_]+$/.test(k) ? 'Use letras minúsculas, números e _.' : qKeys.has(k) ? 'Já é o nome de uma pergunta.' : dup ? 'Nome repetido.' : '';
+        r.key.classList.toggle('bad', !!bad); r.hint.textContent = bad; r.hint.hidden = !bad;
+      }
+    };
+    const draw = focus => {
+      rows = w.extras.map((x, i) => {
+        const key = el('input', { class: 'input mono', value: x.chave, placeholder: 'user_tag', 'aria-label': 'Nome do campo' });
+        const val = el('input', { class: 'input', value: x.valor, placeholder: 'Ex.: lead-quente', 'aria-label': 'Valor' });
+        const hint = el('p', { class: 'hint', style: 'color:var(--err);margin:-4px 0 8px', hidden: true });
+        key.addEventListener('input', () => { x.chave = key.value; touch(); check(); });
+        key.addEventListener('blur', () => { const k = slugKey(key.value); if (k !== key.value) { x.chave = k; key.value = k; touch(); } check(); });
+        val.addEventListener('input', () => { x.valor = val.value; touch(); });
+        if (focus === i) setTimeout(() => key.focus(), 0);
+        const row = el('div', { class: 'extra-grid' }, key, val,
+          el('button', { class: 'icon-btn danger', type: 'button', 'aria-label': 'Remover campo', onclick: () => { w.extras.splice(i, 1); touch(); draw(); } }, icon('x', 15)));
+        return { x, key, hint, row };
+      });
+      fill(holder,
+        w.extras.length > 0 && el('div', { class: 'grid-head extra-grid' }, el('span', { text: 'Nome do campo' }), el('span', { text: 'Valor' }), el('span')),
+        rows.map(r => [r.row, r.hint]),
+        el('button', { class: 'btn sm', type: 'button', onclick: () => { w.extras.push({ chave: '', valor: '' }); touch(); draw(w.extras.length - 1); } }, icon('plus', 14), 'Campo'));
+      check();
+    };
+    draw();
+    return el('div', { class: 'section' },
+      el('h3', {}, 'Campos personalizados', tip('Vão junto das respostas em todo envio, com o nome e o valor que você definir. A pessoa nunca vê. O valor aceita {chave} para usar uma resposta, ex.: {renda_mensal}.')),
+      el('p', { class: 'hint', text: 'Dados extras que não aparecem no formulário, como uma tag do lead.' }),
+      holder);
+  }
+
+  function integrationsPanel() {
+    return el('div', {}, head('Integrações'), webhookCard(), valuesSection(), extrasSection());
   }
 
   /* ----- left list ----- */
@@ -350,6 +424,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
     let content;
     if (S.tab === 'design') content = designPanel();
     else if (S.tab === 'ajustes') content = settingsPanel();
+    else if (S.tab === 'integracoes') content = integrationsPanel();
     else if (S.sel === 'welcome') content = welcomePanel();
     else if (S.sel === 'envio') content = envioPanel();
     else if (S.sel === 'final') content = finalPanel();
@@ -693,6 +768,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
             q.opcoes[i] = input.value;
             q.exclusivas = q.exclusivas.map(x => (x === old ? input.value : x));
             if (q.ramos[old] !== undefined) { q.ramos[input.value] = q.ramos[old]; delete q.ramos[old]; } // keep the rule when an option is renamed
+            if (q.valores?.[old] !== undefined) { q.valores[input.value] = q.valores[old]; delete q.valores[old]; } // and its custom value
             for (const rule of sch().final.redirecionamento.regras) for (const c of rule.condicoes) if (c.pergunta === q.id && c.valor === old) c.valor = input.value;
             for (const pr of sch().pontuacao.regras) if (pr.pergunta === q.id && pr.valor === old) pr.valor = input.value;
             touch(); onChange?.();
@@ -704,7 +780,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
               touch();
             } }), 'sozinha');
           const row = el('div', { class: 'opt-row' }, q.tipo !== 'dropdown' && el('span', { class: `dot${q.tipo === 'multipla' ? ' sq' : ''}`, 'aria-hidden': 'true' }), input, excl,
-            el('button', { class: 'icon-btn', type: 'button', title: 'Remover', 'aria-label': `Remover opção ${i + 1}`, onclick: () => { delete q.ramos[q.opcoes[i]]; q.opcoes.splice(i, 1); draw(); touch(); onChange?.(); } }, icon('x', 15)));
+            el('button', { class: 'icon-btn', type: 'button', title: 'Remover', 'aria-label': `Remover opção ${i + 1}`, onclick: () => { delete q.ramos[q.opcoes[i]]; if (q.valores) delete q.valores[q.opcoes[i]]; q.opcoes.splice(i, 1); draw(); touch(); onChange?.(); } }, icon('x', 15)));
           if (focusIndex === i) setTimeout(() => input.focus(), 0);
           return row;
         }),
@@ -913,9 +989,21 @@ export async function renderEditor(id, { mount, setCleanup }) {
         toggle(a, 'mostrar_progresso', 'Barra de progresso'),
         toggle(a, 'mostrar_numero', 'Número de cada pergunta'),
         toggle(a, 'uma_vez', 'Uma resposta por pessoa', { help: 'Depois de enviar, o mesmo navegador não consegue responder de novo.' }),
-        toggle(sch().consentimento, 'ativo', 'Pedir consentimento (LGPD) antes de enviar', { rerender: true }),
-        sch().consentimento.ativo && field('Texto do consentimento', text(sch().consentimento, 'texto', { multiline: true, rows: 3 }))),
-      webhookCard(),
+        toggle(sch().consentimento, 'ativo', 'Pedir consentimento (LGPD) antes de enviar', { rerender: true, help: 'Uma caixa antes do envio. É opcional para a pessoa: ela envia marcando ou não, e o webhook recebe consentimento: true ou false.' }),
+        sch().consentimento.ativo && el('div', { class: 'sub-opts' },
+          field('Texto do consentimento', text(sch().consentimento, 'texto', { multiline: true, rows: 3 })),
+          el('div', { class: 'field' }, el('label', {}, 'A caixa começa', tip('Pela LGPD, caixa já marcada não vale como consentimento formal. Use “marcada” só para preferências de contato.')),
+            el('div', { class: 'radios', role: 'radiogroup' }, [[false, 'Desmarcada'], [true, 'Marcada']].map(([v, l]) => {
+              const r = el('input', { type: 'radio', name: 'consent-default', checked: !!sch().consentimento.pre_marcado === v });
+              r.addEventListener('change', () => { sch().consentimento.pre_marcado = v; touch(); });
+              return el('label', { class: 'radio' }, r, el('span', { text: l }));
+            }))))),
+      el('div', { class: 'section' }, el('h3', { text: 'Integrações' }),
+        toggle(sch().ajustes.webhook, 'ativo', 'Enviar respostas por webhook', {
+          help: 'Liga a aba Integrações, onde ficam o endereço, os exemplos de envio, os valores das respostas e os campos personalizados.',
+          onchange: () => { const w = sch().ajustes.webhook; if (w.ativo && !w.ao_concluir && !w.ao_responder) w.ao_concluir = true; syncTabs(); }
+        }),
+        sch().ajustes.webhook.ativo && el('button', { class: 'btn sm', type: 'button', style: 'margin-left:42px', onclick: () => { S.tab = 'integracoes'; syncTabs(); } }, 'Configurar na aba Integrações', icon('right', 14))),
       seoCard(),
       el('div', { class: 'section' },
         more('Avançado',
@@ -926,9 +1014,10 @@ export async function renderEditor(id, { mount, setCleanup }) {
   /* ----- top bar ----- */
   const topEl = el('div', { class: 'ed-top' });
   const tabsEl = el('div', { class: 'tabs', role: 'tablist' });
-  const TABS = [['conteudo', 'Perguntas'], ['design', 'Aparência'], ['ajustes', 'Ajustes']];
+  const TABS = () => [['conteudo', 'Perguntas'], ['design', 'Aparência'], ['ajustes', 'Ajustes'], ...(sch().ajustes.webhook.ativo ? [['integracoes', 'Integrações']] : [])];
   function syncTabs() {
-    fill(tabsEl, ...TABS.map(([k, label]) => el('button', {
+    if (S.tab === 'integracoes' && !sch().ajustes.webhook.ativo) S.tab = 'ajustes';
+    fill(tabsEl, ...TABS().map(([k, label]) => el('button', {
       class: 'tab', role: 'tab', 'aria-selected': String(S.tab === k),
       onclick: () => { S.tab = k; syncTabs(); renderPanel(); sendPreview(); }
     }, label)));

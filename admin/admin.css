@@ -392,6 +392,20 @@ td.go{width:36px;color:var(--muted)}
 .theme-switch[aria-checked=true] .knob{transform:translateX(22px)}
 .theme-switch .track .ico{position:relative;z-index:1}
 
+/* integrations */
+.val-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.val-head b{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.key{font:12px var(--mono);color:var(--muted);background:var(--soft);padding:2px 6px;border-radius:var(--r-sm);white-space:nowrap}
+.val-cols,.val-row{display:grid;grid-template-columns:minmax(0,1fr) 16px minmax(0,1fr);gap:10px;align-items:center}
+.val-cols{font-size:12px;color:var(--muted);font-weight:550;margin-bottom:6px}
+.val-row{margin-bottom:6px}.val-row .ico{color:var(--muted)}
+.extra-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) 30px;gap:8px;align-items:center;margin-bottom:8px}
+.sub-opts{margin:-4px 0 14px 42px}
+.radios{display:flex;gap:8px;flex-wrap:wrap}
+.radio{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 12px;border:1px solid var(--line-2);border-radius:var(--r);cursor:pointer;font-size:13px;font-weight:500;background:var(--panel)}
+.radio:has(input:checked){border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.radio input{accent-color:var(--accent);margin:0}
+
 /* form link + QR code */
 .link-grid{display:grid;grid-template-columns:minmax(0,1fr) 132px;gap:20px;align-items:start}
 .qr{display:flex;flex-direction:column;align-items:center;gap:8px}

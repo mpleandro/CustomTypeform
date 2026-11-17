@@ -162,6 +162,9 @@ export function fmtDur(s) {
   return m < 60 ? `${m}min ${pad(s % 60)}s` : `${Math.floor(m / 60)}h ${pad(m % 60)}min`;
 }
 export const formUrl = slug => `${location.origin}/f/${slug}`;
+// Money answers are stored as plain numbers; this shows them with the question's currency symbol.
+export const money = (sym, v) => `${sym || 'R$'} ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const showAnswer = (q, v) => (q?.formato === 'moeda' && v !== undefined && v !== null && v !== '' && Number.isFinite(Number(v)) ? money(q.moeda, v) : display(v));
 export const display = v => (v === undefined || v === null || v === '' ? '' : Array.isArray(v) ? v.join(', ') : typeof v === 'object' ? (v.cidade !== undefined || v.uf !== undefined ? `${v.cidade}/${v.uf}` : Object.entries(v).map(([k, x]) => `${k}: ${x}`).join(' | ')) : String(v));
 export const plain = text => String(text || '').replace(/\*/g, '').trim();
 

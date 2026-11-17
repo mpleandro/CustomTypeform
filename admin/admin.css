@@ -405,6 +405,10 @@ td.go{width:36px;color:var(--muted)}
 .radio{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 12px;border:1px solid var(--line-2);border-radius:var(--r);cursor:pointer;font-size:13px;font-weight:500;background:var(--panel)}
 .radio:has(input:checked){border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 .radio input{accent-color:var(--accent);margin:0}
+.sym-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.radio.sym{min-width:44px;justify-content:center;color:var(--fg)}
+.radio.sym.is-on{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.sym-input{width:90px}
 
 /* form link + QR code */
 .link-grid{display:grid;grid-template-columns:minmax(0,1fr) 132px;gap:20px;align-items:start}

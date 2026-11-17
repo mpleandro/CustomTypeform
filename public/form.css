@@ -102,6 +102,13 @@ select.q-input option{background:var(--bg);color:var(--fg)}
 .btn:disabled{opacity:.6;cursor:progress;transform:none;box-shadow:none}
 .btn span{font-size:18px;font-weight:500;line-height:1;transition:transform .2s}
 .btn:hover span{transform:translateX(4px)}
+.back-link{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 6px;border:0;background:none;color:var(--muted);font:600 15px var(--font);cursor:pointer;border-radius:var(--radius);transition:color .2s}
+.back-link span{transition:transform .2s}
+.back-link:hover,.back-link:focus-visible{color:var(--accent)}
+.back-link:hover span{transform:translateX(-4px)}
+.money{display:flex;align-items:center;gap:12px}
+.money-sym{font-size:clamp(22px,3vw,30px);font-weight:600;color:var(--accent);flex:none}
+.money .q-input{flex:1;min-width:0}
 .hint{font:400 11px var(--mono);color:var(--dim);letter-spacing:.06em}
 .hint b{color:var(--muted);font-weight:500}
 
@@ -161,6 +168,7 @@ select.q-input option{background:var(--bg);color:var(--fg)}
   .opt{min-height:52px;font-size:16px}
   .pair{grid-template-columns:1fr;gap:20px}
   .actions .btn{flex:1;justify-content:center}
+  .actions .back-link{width:100%;justify-content:center}
   .nav{bottom:max(14px,env(safe-area-inset-bottom))}
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-delay:0ms!important;transition-duration:.01ms!important}}

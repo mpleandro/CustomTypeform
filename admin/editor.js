@@ -118,6 +118,25 @@ export async function renderEditor(id, { mount, setCleanup }) {
     input.addEventListener('change', () => { obj[key] = input.checked; onchange?.(); touch(); if (rerender) renderPanel(); });
     return el('label', { class: 'switch' }, input, el('span', { text: label }), opts.help && tip(opts.help));
   }
+  // Number or money: money shows a currency symbol and two decimals to the respondent; the answer stays a number.
+  function numberFormat(q) {
+    const radios = el('div', { class: 'radios', role: 'radiogroup' }, [['numero', 'Número'], ['moeda', 'Monetário']].map(([v, l]) => {
+      const r = el('input', { type: 'radio', name: `fmt-${q.id}`, checked: (q.formato || 'numero') === v });
+      r.addEventListener('change', () => { q.formato = v; if (v === 'moeda' && !q.moeda) q.moeda = 'R$'; touch(); renderPanel(); });
+      return el('label', { class: 'radio' }, r, el('span', { text: l }));
+    }));
+    if (q.formato !== 'moeda') return field('Formato', radios);
+    const sym = el('input', { class: 'input sym-input', value: q.moeda || 'R$', maxlength: 6, 'aria-label': 'Símbolo da moeda', placeholder: 'R$' });
+    const presets = el('div', { class: 'radios' });
+    const drawPresets = () => fill(presets, ['R$', 'US$', '€', '£', '¥'].map(c => el('button', {
+      type: 'button', class: `radio sym${q.moeda === c ? ' is-on' : ''}`, 'aria-pressed': String(q.moeda === c),
+      onclick: () => { q.moeda = c; sym.value = c; drawPresets(); touch(); }
+    }, c)));
+    sym.addEventListener('input', () => { q.moeda = sym.value.trim(); drawPresets(); touch(); });
+    drawPresets();
+    return el('div', {}, field('Formato', radios),
+      field('Símbolo da moeda', el('div', { class: 'sym-row' }, presets, sym), undefined, 'Escolha um ou digite outro. A pessoa digita só os números (ex.: 1.250,00); o webhook e o CSV recebem o número puro (1250).'));
+  }
   function select(obj, key, options, onchange) {
     const node = el('select', { class: 'select' }, options.map(([v, l]) => el('option', { value: v, text: l })));
     node.value = obj[key];
@@ -878,6 +897,7 @@ export async function renderEditor(id, { mount, setCleanup }) {
       parts.push(field('Linhas', linesEditor(q), undefined, 'As afirmações. Cada uma recebe uma letra (A, B, C…) usada na pontuação. Apagar uma do meio muda as letras seguintes.'),
         field('Colunas', optionsEditor(q, drawRoute), undefined, 'As alternativas de resposta, iguais para todas as linhas.'));
     }
+    if (q.tipo === 'numero') parts.push(numberFormat(q));
     if (q.tipo === 'escala') {
       const lockNote = ' Travado: o formulário já recebeu respostas.';
       const estiloSel = el('select', { class: 'select', disabled: locked }, [['numeros', 'Números (ex.: NPS de 0 a 10)'], ['estrelas', 'Estrelas'], ['emojis', 'Carinhas']].map(([v, l]) => el('option', { value: v, text: l })));

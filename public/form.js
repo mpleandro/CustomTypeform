@@ -58,8 +58,11 @@ function el(tag, attrs = {}, ...children) {
 
 /* ---------- text helpers ---------- */
 
+const moneyText = v => Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 function display(q, v) {
   if (v === undefined || v === null || v === '') return '';
+  if (q?.formato === 'moeda' && Number.isFinite(Number(v))) return `${q.moeda || 'R$'} ${moneyText(v)}`;
   if (Array.isArray(v)) return v.join(', ');
   if (typeof v === 'object') return v.cidade && v.uf ? `${v.cidade}/${v.uf}` : v.cidade === undefined ? Object.entries(v).map(([k, x]) => `${k}: ${x}`).join(' | ') : '';
   return String(v);
@@ -192,9 +195,14 @@ function remainingAfter(i) {
 // What the respondent sees as "question N": how many numbered questions they have passed, not the position in the form.
 const shownNumber = () => (PREVIEW ? screens[index].num : path.filter(j => isNumbered(screens[j])).length);
 
+// "Voltar" sits next to the main button whenever there is a previous screen to return to.
+const canGoBack = () => (PREVIEW ? index > 0 : path.length > 1);
+const backLink = () => canGoBack() && el('button', { class: 'back-link', type: 'button', onclick: prev }, el('span', { 'aria-hidden': 'true', text: '←' }), 'Voltar');
+
 function okButton(text = 'OK', withHint = true) {
   return el('div', { class: 'actions' },
     el('button', { class: 'btn', type: 'button', onclick: next }, text, el('span', { text: '→' })),
+    backLink(),
     withHint && el('span', { class: 'hint kbd' }, 'pressione ', el('b', { text: 'Enter ↵' }))
   );
 }
@@ -227,7 +235,23 @@ function questionScreen(s, root) {
   });
 
   switch (q.tipo) {
-    case 'texto': case 'email': case 'telefone': case 'numero': case 'url': case 'data': {
+    case 'numero': if (q.formato === 'moeda') {
+      // Typed like a bank app: digits fill from the cents (1 → 0,01, 125000 → 1.250,00). The answer is the plain number.
+      const input = textInput('moeda', { type: 'text', inputmode: 'numeric', autocomplete: 'off', spellcheck: 'false', placeholder: q.placeholder || '0,00' });
+      const show = () => { const v = answers[q.id]; input.value = v !== undefined && v !== '' && Number.isFinite(Number(v)) ? moneyText(v) : ''; };
+      show();
+      input.addEventListener('input', () => {
+        const digits = input.value.replace(/\D/g, '').replace(/^0+/, '').slice(0, 13);
+        answers[q.id] = digits ? (Number(digits) / 100).toFixed(2) : '';
+        show();
+        clearError(); saveDraft();
+      });
+      field = el('div', { class: 'money' }, el('span', { class: 'money-sym', 'aria-hidden': 'true', text: q.moeda || 'R$' }), input);
+      root._focus = input;
+      break;
+    }
+    // falls through: plain number
+    case 'texto': case 'email': case 'telefone': case 'url': case 'data': {
       const input = textInput(q.tipo, {
         type: { email: 'email', telefone: 'tel', data: 'date' }[q.tipo] || 'text',
         inputmode: { telefone: 'tel', email: 'email', numero: 'decimal', url: 'url' }[q.tipo],
@@ -441,7 +465,7 @@ function consentScreen(root) {
     schema.envio.texto && el('p', { class: 'lead', text: interp(schema.envio.texto) }),
     el('label', { class: 'consent', for: 'consent' }, box, el('span', { text: schema.consentimento.texto })),
     error,
-    el('div', { class: 'actions' }, submitBtn, el('span', { class: 'hint kbd' }, 'pressione ', el('b', { text: 'Enter ↵' })))
+    el('div', { class: 'actions' }, submitBtn, backLink(), el('span', { class: 'hint kbd' }, 'pressione ', el('b', { text: 'Enter ↵' })))
   );
 }
 

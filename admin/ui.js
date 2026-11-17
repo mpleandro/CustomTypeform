@@ -91,6 +91,8 @@ const ICONS = {
   help: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
   grid: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/>',
   sigma: '<path d="M18 7V4H6l6 8-6 8h12v-3"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
   image: '<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/>'
 };
 export function icon(name, size = 16) {
@@ -165,4 +167,26 @@ export const plain = text => String(text || '').replace(/\*/g, '').trim();
 export function fill(node, ...children) {
   node.replaceChildren(...children.flat(Infinity).filter(c => c !== null && c !== undefined && c !== false));
   return node;
+}
+
+/* Light/dark mode: follows the system until the person picks one; the choice is kept in this browser. */
+const prefersDark = () => window.matchMedia('(prefers-color-scheme: dark)').matches;
+export const currentTheme = () => document.documentElement.dataset.theme || (prefersDark() ? 'dark' : 'light');
+export function setTheme(mode) {
+  document.documentElement.dataset.theme = mode;
+  try { localStorage.setItem('ctf-theme', mode); } catch { /* private mode: still switches for this visit */ }
+  document.querySelectorAll('meta[name=theme-color]').forEach(m => m.setAttribute('content', mode === 'dark' ? '#141312' : '#f7f6f3'));
+}
+export function themeSwitch() {
+  const btn = el('button', { type: 'button', class: 'theme-switch', role: 'switch' });
+  const draw = () => {
+    const dark = currentTheme() === 'dark';
+    btn.setAttribute('aria-checked', String(dark));
+    btn.setAttribute('aria-label', 'Modo escuro');
+    btn.title = dark ? 'Mudar para o modo claro' : 'Mudar para o modo escuro';
+    fill(btn, el('span', { text: dark ? 'Modo escuro' : 'Modo claro' }), el('span', { class: 'track', 'aria-hidden': 'true' }, el('span', { class: 'knob' }), icon('sun', 12), icon('moon', 12)));
+  };
+  btn.addEventListener('click', () => { setTheme(currentTheme() === 'dark' ? 'light' : 'dark'); draw(); });
+  draw();
+  return btn;
 }

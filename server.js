@@ -320,12 +320,34 @@ const publicRoutes = {
 
 /* ---------- admin API ---------- */
 
+async function saveGroup(req, res, id, creating) {
+  if (!creating && !store.getGroup(id)) return fail(res, 404, 'Grupo não encontrado.');
+  const body = await readJson(req, 256 * 1024).catch(() => null);
+  if (!body) return fail(res, 400, 'Requisição inválida.');
+  const nome = (isText(body.nome) ? body.nome.trim() : '').slice(0, 80);
+  if (!nome) return fail(res, 422, 'Dê um nome ao grupo.');
+  const perguntas = schemaLib.sanitizeGroupQuestions(body.perguntas);
+  if (!perguntas.length) return fail(res, 422, 'O grupo precisa de pelo menos uma pergunta.');
+  const g = { id, nome, descricao: (isText(body.descricao) ? body.descricao.trim() : '').slice(0, 200), perguntas };
+  store.saveGroup(g);
+  json(res, 200, { ok: true, grupo: store.getGroup(id) });
+}
+
 function formPayload(f) {
   return { id: f.id, slug: f.slug, titulo: f.title, status: f.status, estado: f.status === 'draft' ? 'rascunho' : openState(f), aberto_em: f.opened_at, schema: f.schema, criado_em: f.created_at, atualizado_em: f.updated_at };
 }
 const daysOf = q => { const n = Number(q.get('days')); return Number.isFinite(n) && n >= 0 && n <= 365 ? Math.floor(n) : 30; };
 
 const adminRoutes = [
+  /* question groups: reusable sets of questions inserted into any form */
+  ['GET', '/api/admin/groups', async (req, res) => json(res, 200, { ok: true, grupos: store.listGroups() })],
+  ['POST', '/api/admin/groups', async (req, res) => saveGroup(req, res, crypto.randomUUID(), true)],
+  ['PUT', '/api/admin/groups/:id', async (req, res, { id }) => saveGroup(req, res, id, false)],
+  ['DELETE', '/api/admin/groups/:id', async (req, res, { id }) => {
+    if (!store.getGroup(id)) return fail(res, 404, 'Grupo não encontrado.');
+    store.deleteGroup(id); json(res, 200, { ok: true });
+  }],
+
   ['GET', '/api/admin/forms', async (req, res) => {
     json(res, 200, { ok: true, forms: store.listForms().map(({ agenda, ...f }) => ({ ...f, agenda, rate: f.started ? f.completed / f.started : 0, estado: f.status === 'draft' ? 'rascunho' : openState({ status: f.status, schema: { agenda } }) })) });
   }],

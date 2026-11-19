@@ -109,6 +109,12 @@ select.q-input option{background:var(--bg);color:var(--fg)}
 .money{display:flex;align-items:center;gap:12px}
 .money-sym{font-size:clamp(22px,3vw,30px);font-weight:600;color:var(--accent);flex:none}
 .money .q-input{flex:1;min-width:0}
+.phone{display:flex;align-items:stretch;gap:10px}
+.phone>input.q-input{flex:1;min-width:0}
+.phone-cc{position:relative;flex:none;width:auto;display:flex;align-items:center;gap:8px;padding-right:38px;white-space:nowrap;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='9'%3E%3Cpath d='M1 1l6 6 6-6' stroke='%23888' stroke-width='1.6' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center}
+.phone-cc:focus-within{border-color:var(--accent-line);background-color:var(--surface-2);box-shadow:0 0 0 4px var(--accent-soft)}
+.phone-cc-select{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:16px;border:0}
+.phone-cc-select option{background:var(--bg);color:var(--fg)}
 .hint{font:400 11px var(--mono);color:var(--dim);letter-spacing:.06em}
 .hint b{color:var(--muted);font-weight:500}
 

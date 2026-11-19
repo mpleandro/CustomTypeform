@@ -132,7 +132,7 @@ export const TIPOS = {
   texto: { nome: 'Texto curto', icon: 'type', desc: 'Uma linha de texto' },
   longo: { nome: 'Texto longo', icon: 'lines', desc: 'Várias linhas' },
   email: { nome: 'E-mail', icon: 'mail', desc: 'Confere se o e-mail é válido' },
-  telefone: { nome: 'Telefone / WhatsApp', icon: 'phone', desc: 'Com DDD' },
+  telefone: { nome: 'Telefone / WhatsApp', icon: 'phone', desc: 'Brasil ou outro país' },
   numero: { nome: 'Número', icon: 'hash', desc: 'Só números' },
   url: { nome: 'Link', icon: 'link', desc: 'Site ou perfil' },
   data: { nome: 'Data', icon: 'calendar', desc: 'Calendário' },

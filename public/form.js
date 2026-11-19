@@ -97,16 +97,28 @@ function formatPhone(raw) {
   return rest.length > cut ? `(${ddd}) ${rest.slice(0, cut)}-${rest.slice(cut)}` : `(${ddd}) ${rest}`;
 }
 
+// Flag emoji from an ISO country code (shows as the two letters where the system has no flag font).
+const flag = iso => String.fromCodePoint(...[...iso].map(ch => 0x1f1a5 + ch.charCodeAt(0)));
+
+// How a phone answer reads in the field: Brazil as "(11) 98765-4321", other countries as "+1 2025550123".
+function phoneText(raw, iso) {
+  const { pais, digits } = CtfRoute.parsePhone(raw, iso);
+  if (!pais) return String(raw || '');
+  return pais.iso === 'BR' ? formatPhone(digits) : `+${pais.ddi} ${digits.slice(0, 15 - pais.ddi.length)}`;
+}
+
 // Links (Hotmart, e-mail campaigns...) can pass respondent data in the URL; drafts win over URL values.
 function prefill() {
   const pick = keys => keys.map(k => (params.get(k) || '').trim()).find(Boolean) || '';
   for (const q of schema.perguntas) {
     if (!q.prefill?.length || answers[q.id]) continue;
     let value = pick(q.prefill);
-    if (q.tipo === 'telefone') {
+    if (q.tipo === 'telefone' && value) {
       const ddd = pick(['phone_local_code', 'phone_ddd', 'ddd']).replace(/\D/g, '');
-      if (ddd && value && value.replace(/\D/g, '').length <= 9) value = ddd + value;
-      value = formatPhone(value);
+      const ddi = pick(['phone_country_code', 'phone_ddi', 'ddi']).replace(/\D/g, '');
+      if (ddd && !/^(\+|00)/.test(value) && value.replace(/\D/g, '').length <= 9) value = ddd + value;
+      if (ddi && ddi !== '55' && !/^(\+|00)/.test(value)) value = `+${ddi} ${value}`;
+      value = phoneText(value);
     }
     if (value && (q.tipo === 'texto' || q.tipo === 'email' || q.tipo === 'telefone' || q.tipo === 'longo' || q.tipo === 'numero' || q.tipo === 'url')) answers[q.id] = value;
   }
@@ -251,16 +263,63 @@ function questionScreen(s, root) {
       break;
     }
     // falls through: plain number
-    case 'texto': case 'email': case 'telefone': case 'url': case 'data': {
+    case 'telefone': {
+      // Country picker (Brazil by default) + number. The answer keeps the country as "+DDI ..." when it isn't Brazil.
+      let pais = CtfRoute.parsePhone(answers[q.id] || '').pais || CtfRoute.COUNTRIES[0];
+      const input = textInput('telefone', { type: 'tel', inputmode: 'tel', autocomplete: 'tel-national', spellcheck: 'false' });
+      const shown = el('span', { class: 'phone-cc-label', 'aria-hidden': 'true' });
+      const select = el('select', { class: 'phone-cc-select', 'aria-label': 'País do telefone', autocomplete: 'tel-country-code' },
+        CtfRoute.COUNTRIES.map(c => el('option', { value: c.iso, text: `${flag(c.iso)} ${c.nome} (+${c.ddi})` })));
+      const national = () => (pais.iso === 'BR' ? input.value : input.value.replace(/[^\d\s()-]/g, '').slice(0, 20));
+      const sync = () => {
+        select.value = pais.iso;
+        shown.textContent = `${flag(pais.iso)} +${pais.ddi}`;
+        input.placeholder = q.placeholder || (pais.iso === 'BR' ? '(11) 98765-4321' : 'Número com código de área');
+        const digits = national().replace(/\D/g, '');
+        answers[q.id] = !digits ? '' : pais.iso === 'BR' ? formatPhone(digits) : `+${pais.ddi} ${digits}`;
+      };
+      const stored = answers[q.id] || '';
+      if (stored) {
+        const { digits } = CtfRoute.parsePhone(stored, pais.iso);
+        input.value = pais.iso === 'BR' ? formatPhone(digits) : digits;
+      }
+      sync();
+      input.addEventListener('input', () => {
+        const typed = input.value.trim();
+        // Pasting a full international number ("+351 912 345 678") switches the country by itself.
+        if (/^(\+|00)/.test(typed)) {
+          const parsed = CtfRoute.parsePhone(typed, pais.iso);
+          if (!parsed.pais) { // still typing the country code: keep it as typed
+            input.value = typed.replace(/[^\d+\s]/g, '').slice(0, 8);
+            answers[q.id] = input.value;
+            clearError(); saveDraft();
+            return;
+          }
+          pais = parsed.pais; input.value = parsed.digits;
+        }
+        if (pais.iso === 'BR') input.value = formatPhone(input.value);
+        else input.value = national();
+        sync(); clearError(); saveDraft();
+      });
+      select.addEventListener('change', () => {
+        pais = CtfRoute.COUNTRIES.find(c => c.iso === select.value) || CtfRoute.COUNTRIES[0];
+        input.value = pais.iso === 'BR' ? formatPhone(input.value) : input.value.replace(/[^\d\s()-]/g, '');
+        sync(); clearError(); saveDraft();
+        input.focus();
+      });
+      field = el('div', { class: 'phone' }, el('div', { class: 'phone-cc q-input' }, shown, select), input);
+      root._focus = input;
+      break;
+    }
+    case 'texto': case 'email': case 'url': case 'data': {
       const input = textInput(q.tipo, {
-        type: { email: 'email', telefone: 'tel', data: 'date' }[q.tipo] || 'text',
-        inputmode: { telefone: 'tel', email: 'email', numero: 'decimal', url: 'url' }[q.tipo],
+        type: { email: 'email', data: 'date' }[q.tipo] || 'text',
+        inputmode: { email: 'email', numero: 'decimal', url: 'url' }[q.tipo],
         autocapitalize: q.tipo === 'texto' ? 'sentences' : 'off', spellcheck: q.tipo === 'texto' ? undefined : 'false',
-        autocomplete: { email: 'email', telefone: 'tel-national' }[q.tipo] || 'off'
+        autocomplete: { email: 'email' }[q.tipo] || 'off'
       });
       input.value = answers[q.id] || '';
       input.addEventListener('input', () => {
-        if (q.tipo === 'telefone') input.value = formatPhone(input.value);
         answers[q.id] = input.value;
         clearError(); saveDraft();
       });
@@ -545,7 +604,7 @@ function validate(q) {
     case 'dropdown': return v === 'Outra' && !(answers[`${q.id}_outra`] || '').trim() ? 'Conte qual é a sua resposta.' : '';
     case 'matriz': return Object.keys(v).length < (q.linhas || []).length ? 'Responda todas as afirmações.' : '';
     case 'email': return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()) ? '' : 'Esse e-mail não parece válido.';
-    case 'telefone': return CtfRoute.phoneError(v.replace(/\D/g, ''));
+    case 'telefone': return CtfRoute.phoneCheck(v);
     case 'numero': return Number.isFinite(Number(v.replace(',', '.'))) ? '' : 'Digite apenas números.';
     case 'url': return /^(https?:\/\/)?[^\s/]+\.[^\s/]{2,}/i.test(v.trim()) ? '' : 'Esse link não parece válido.';
     case 'data': return /^\d{4}-\d{2}-\d{2}$/.test(v) ? '' : 'Informe uma data válida.';
